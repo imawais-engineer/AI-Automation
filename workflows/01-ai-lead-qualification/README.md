@@ -1,78 +1,75 @@
-# AI Lead Capture & Qualification Workflow
+# AI Lead Qualification Automation
+
+This workflow is a demo AI automation built with n8n, OpenAI, Gmail, and Airtable CRM.
+
+It captures real estate buyer leads from a form, extracts and scores lead information using AI, checks whether the lead is qualified, sends an email alert, and saves the lead into Airtable CRM.
 
 ## Problem
 
-Leads come from multiple sources but sit in your inbox or form responses without automatic qualification or follow-up. You lose opportunities because:
-- Manual lead entry is slow
-- No automated scoring or qualification
-- Follow-ups happen inconsistently or too late
-- Leads go cold before you respond
+Real estate agents and small agencies often spend time manually reviewing buyer inquiries, checking budgets, reading purchase timelines, and deciding which leads deserve quick follow-up.
+
+This can slow down response time and cause qualified leads to be missed.
 
 ## Solution
 
-This workflow automatically:
-1. Captures leads from a form submission
-2. Scores them using AI (OpenAI or Claude)
-3. Routes hot leads to your CRM immediately
-4. Sends automated follow-up emails
-5. Logs everything for tracking
+This workflow automates the lead qualification process.
 
-## Workflow Steps
-
-```
-Form Submission
-    ↓
-Extract Form Data
-    ↓
-Send to AI for Scoring (GPT/Claude)
-    ↓
-Decision: Score > 80?
-    ├→ YES: Add to HubSpot + Send Welcome Email + Create Task
-    └→ NO: Log to Spreadsheet + Send Manager Alert
-    ↓
-Log Execution (success/error)
-    ↓
-Send Error Alert if Failure
-```
+A buyer submits a form. The workflow sends the lead details to an AI information extractor, calculates a qualification score, checks if the lead is qualified, sends a Gmail alert, and stores the lead in Airtable CRM.
 
 ## Tools Used
 
-- **n8n or Make.com** – Workflow orchestration
-- **Google Forms or Web Form** – Lead capture
-- **OpenAI API** – Lead scoring AI
-- **HubSpot or Airtable** – CRM storage
-- **Gmail** – Automated emails
-- **Google Sheets** – Logging and backup
+- n8n
+- OpenAI / AI Chat Model
+- Gmail
+- Airtable
+- Form Trigger
+- Conditional Logic
+
+## Workflow Steps
+
+1. Lead submits a property inquiry form.
+2. n8n receives the form submission.
+3. AI extracts structured lead information.
+4. AI calculates lead score based on budget, timeline, location, and property type.
+5. Workflow checks whether the lead is qualified.
+6. Qualified lead alert is sent through Gmail.
+7. Lead details are saved in Airtable CRM.
 
 ## Business Use Case
 
-**Perfect for:**
-- SaaS companies with multiple lead sources
-- Agencies qualifying client prospects
-- Service businesses (consultants, coaches)
-- E-commerce with inquiry forms
+This workflow is useful for:
 
-**Expected Results:**
-- ✓ Hot leads contacted within 1 hour
-- ✓ No leads fall through the cracks
-- ✓ Sales team focuses on qualified prospects
-- ✓ Response rate improves
+- Real estate agents
+- Property consultants
+- Small real estate agencies
+- Sales teams
+- Lead generation teams
 
-## Setup Overview
+It helps reduce manual lead checking, improve response speed, and keep CRM records organized.
 
-1. Connect Google Forms to n8n/Make
-2. Set up OpenAI API key
-3. Connect to HubSpot/Airtable
-4. Test with sample lead data
-5. Deploy when ready
+## Demo Video
 
-**Estimated Setup Time:** 2-3 hours
+YouTube Demo: https://youtu.be/rynkF-VkaOY
+
+## Screenshots
+
+Screenshots are available in the `/screenshots` folder.
+
+## Exported Workflow
+
+The exported n8n workflow JSON is available in the `/exported-workflow` folder.
+
+## Setup Notes
+
+To reuse this workflow:
+
+1. Replace the demo form with your own form.
+2. Connect your OpenAI account.
+3. Connect your Gmail account.
+4. Connect your Airtable base.
+5. Update lead scoring rules if needed.
+6. Test the workflow with sample lead data.
 
 ## Disclaimer
 
-This is a **demo workflow** for learning and client demonstration purposes.
-
----
-
-**Status:** Planned  
-**Last Updated:** June 2026
+This is a portfolio/demo workflow created for learning, testing, and client demonstration purposes. It does not represent confidential client work.
