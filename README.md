@@ -149,9 +149,9 @@ workflows/
 
 If you have a manual process involving forms, spreadsheets, emails, CRMs, calendars, or repeated app-to-app data movement, I can help design and build an automation.
 
-- **Upwork:** [Your Upwork Profile](#)
-- **Portfolio:** [Your Portfolio Website](#)
-- **LinkedIn:** [Your LinkedIn Profile](#)
+- **Upwork:** [Your Upwork Profile](https://www.upwork.com/freelancers/~01838e4fc5162aaf52)
+- **Portfolio:** [Your Portfolio Website](https://imawais.engineer)
+- **LinkedIn:** [Your LinkedIn Profile](https://linkedin.com/in/se-muhammad-awais/)
 - **GitHub:** [@imawais-engineer](https://github.com/imawais-engineer)
 
 ---
