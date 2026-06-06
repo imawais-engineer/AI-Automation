@@ -54,7 +54,7 @@ This portfolio demonstrates:
 
 | # | Workflow | Status | Demo | Notes |
 |---|----------|--------|------|-------|
-| 1 | AI Lead Capture & Qualification | Planned | [Demo](#) | Form → AI Scoring → CRM → Email |
+| 1 | AI Lead Capture & Qualification | Planned | [Demo](https://youtu.be/rynkF-VkaOY) | Form → AI Scoring → CRM → Email |
 | 2 | Google Workspace Reporting | Planned | [Demo](#) | Sheets → Report → Docs → Email |
 | 3 | CRM Follow-Up Automation | Planned | [Demo](#) | Lead Entry → Task Creation → Reminders |
 | 4 | AI Email Assistant | Planned | [Demo](#) | Gmail → AI Categorization → Draft Reply |
