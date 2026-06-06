@@ -1,0 +1,36 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node modules
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# OS files
+Thumbs.db
+.Spotlight-V100
+.Trashes
+
+# Workflow exports (if containing sensitive data)
+# *.json  # Uncomment if exporting n8n workflows with credentials
+
+# Local testing files
+test-output/
+*.tmp
