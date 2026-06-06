@@ -1,0 +1,480 @@
+{
+  "name": "AI Agent Leads Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Property Form",
+        "formDescription": "Fill the form to buy!",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Full Name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Email",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Budget Range",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Preferred Location",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Purchase Timeline",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Property Type",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "dd7dd833-8e13-42f2-9d79-c65dcd340b5a",
+      "name": "On form submission",
+      "type": "n8n-nodes-base.formTrigger",
+      "position": [
+        -48,
+        160
+      ],
+      "webhookId": "bc1db529-ce76-47f2-9b5c-1da18c6d4a9f",
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "id": "792e8daf-31b5-416d-993a-cbb23a96b60f",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        -48,
+        384
+      ],
+      "typeVersion": 1.2,
+      "credentials": {
+        "openAiApi": {
+          "id": "OhmpixsQSDocDK8V",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "text": "=You are a real estate lead qualification assistant.\n\nAnalyze the lead and return ONLY valid JSON.\n\nInput:\n\nName: {{ $json['Full Name'] }}\nEmail: {{ $json.Email }}\nBudget: {{ $json['Budget Range'] }}\nLocation: {{ $json['Preferred Location'] }}\nTimeline: {{ $json['Purchase Timeline'] }}\nProperty Type: {{ $json['Property Type'] }}\n\nScoring Rules:\n\n- Budget above $1M = +40\n- Budget above $500k = +25\n- Timeline within 30 days = +30\n- Timeline within 90 days = +20\n- Sydney location = +20\n- Property Type specified = +10\n\nReturn:\n\n{\n  \"name\": \"\",\n  \"email\": \"\",\n  \"budget_min\": 0,\n  \"budget_max\": 0,\n  \"location\": \"\",\n  \"timeline\": \"\",\n  \"urgency\": \"\",\n  \"score\": 0\n}",
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"name\": \"string\",\n  \"email\": \"string\",\n  \"budget_min\": 0,\n  \"budget_max\": 0,\n  \"location\": \"string\",\n  \"timeline\": \"string\",\n  \"urgency\": \"high\",\n  \"score\": 0\n}",
+        "options": {}
+      },
+      "id": "bceeba91-ab16-45f3-abb8-737f7b0a7176",
+      "name": "Information Extractor",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "position": [
+        176,
+        160
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "79c024d4-0727-4b53-bc8a-d87502b4cefd",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.qualified }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f9e95090-c4a7-4229-8b3f-b7d233b6a8c3",
+      "name": "If",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        768,
+        160
+      ],
+      "typeVersion": 2.2,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c199e2d3-6202-4db7-8912-be72a411b484",
+              "name": "qualified",
+              "type": "boolean",
+              "value": "={{ $json[\"output\"][\"score\"] >= 70 }}"
+            }
+          ]
+        },
+        "options": {
+          "ignoreConversionErrors": true
+        }
+      },
+      "id": "67fb827d-6240-47dc-be58-565dd18d899b",
+      "name": "Edit Fields",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        544,
+        160
+      ],
+      "typeVersion": 3.4
+    },
+    {
+      "parameters": {
+        "sendTo": "AIMadeQuotes@gmail.com",
+        "subject": "🔥 NEW QUALIFIED LEAD",
+        "message": "=Details of the New Qualified Lead are given below:\n\nName:\n{{ $('Information Extractor').item.json.output.name }}\n\nEmail:\n{{ $('Information Extractor').item.json.output.email }}\n\nLocation:\n{{ $('Information Extractor').item.json.output.location }}\n\nBudget:\n{{ $('Information Extractor').item.json.output.budget_min }}\n-\n{{ $('Information Extractor').item.json.output.budget_max }}\n\nTimeline:\n{{ $('Information Extractor').item.json.output.timeline }}\n\nScore:\n{{ $('Information Extractor').item.json.output.score }}",
+        "options": {}
+      },
+      "id": "da9b3756-3377-4d63-9c7a-590a821cdc29",
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "position": [
+        1072,
+        -80
+      ],
+      "webhookId": "3c05319c-15b1-4caf-9fe5-f5db4dba9070",
+      "typeVersion": 2.1,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "R0iJGsYNOtibsgwn",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "appfkDbXZm25hjzBv",
+          "mode": "list",
+          "cachedResultName": "Real Estate CRM",
+          "cachedResultUrl": "https://airtable.com/appfkDbXZm25hjzBv"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tbloxagzGDNebJOUF",
+          "mode": "list",
+          "cachedResultName": "Leads",
+          "cachedResultUrl": "https://airtable.com/appfkDbXZm25hjzBv/tbloxagzGDNebJOUF"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Budget": "={{ $('Information Extractor').item.json.output.budget_max }}",
+            "Score": "={{ $('Information Extractor').item.json.output.score }}",
+            "Name": "={{ $('Information Extractor').item.json.output.name }}",
+            "Email": "={{ $('Information Extractor').item.json.output.email }}",
+            "Location": "={{ $('Information Extractor').item.json.output.location }}",
+            "Timeline": "={{ $('Information Extractor').item.json.output.timeline }}",
+            "Lead Status": "={{ $('Information Extractor').item.json.output.score >= 70 ? 'Qualified' : 'Hot' }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Budget",
+              "displayName": "Budget",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Timeline",
+              "displayName": "Timeline",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Lead Status",
+              "displayName": "Lead Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "New",
+                  "value": "New"
+                },
+                {
+                  "name": "Contacted",
+                  "value": "Contacted"
+                },
+                {
+                  "name": "Qualified",
+                  "value": "Qualified"
+                },
+                {
+                  "name": "Hot",
+                  "value": "Hot"
+                },
+                {
+                  "name": "Lost",
+                  "value": "Lost"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "cf714faa-a035-448b-9afd-3ff29eca4fbc",
+      "name": "Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "position": [
+        1072,
+        448
+      ],
+      "typeVersion": 2.1,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "JTFGZNcioor6bvcO",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Flow",
+        "height": 220,
+        "width": 1100
+      },
+      "id": "d5f84b82-b888-4567-a756-a478abe804d4",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -112,
+        112
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## Engine",
+        "width": 200,
+        "color": 3
+      },
+      "id": "fb681062-cdcf-4c9f-843e-217065516448",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -112,
+        352
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## CRM",
+        "height": 220,
+        "width": 260,
+        "color": 4
+      },
+      "id": "e7acfea4-35b7-4dec-a9c8-21a6f97745ee",
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        384
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## Follow Up",
+        "height": 220,
+        "width": 260,
+        "color": 5
+      },
+      "id": "aa63220b-5e02-4b6a-b0dc-a32921fc8f6e",
+      "name": "Sticky Note3",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        -144
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## AI Agent Leads Processor\n\n- **Problem**  \nReal estate agents waste time on low-quality leads and slow follow-ups.  \nThey manually qualify buyers, which leads to lost deals and burnout.\n\n- **Solution**  \nAn AI-powered agent that automatically scores and filters leads, sends alerts for hot leads, and stores them in a CRM.  \nAgents only focus on high-quality prospects.\n\n- **This AI Agent is for...**  \nSolo real estate agents or small agencies handling 10–50 buyer inquiries per week — especially those using online forms.\n\n- **Scope**  \n✓ Auto-lead intake from form  \n✓ AI lead scoring & qualification  \n✓ Email notification for qualified leads  \n✓ CRM logging (Airtable)  \n✗ No built-in WhatsApp reply (optional add-on)  \n✗ No auto-scheduling (optional add-on)\n\n- **How to Set Up**  \n1. Replace the form with your own (Typeform/Google Form/etc.)  \n2. Link your OpenAI key and Gmail account  \n3. Connect your Airtable base  \n4. Activate the workflow  \n5. Test by submitting a dummy lead\n",
+        "height": 760,
+        "width": 376,
+        "color": 7
+      },
+      "id": "8e4494b1-f0ac-4b12-bfbd-df7ebf0e713e",
+      "name": "Sticky Note4",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -528,
+        -160
+      ],
+      "typeVersion": 1
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Airtable",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Information Extractor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Information Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Information Extractor": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "14c67a7d-ef48-4924-9f62-f562033cdcf2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9924bf8200b84f4a24316004de6e205d5f05abb998ead208352772f3aee3ee90"
+  },
+  "id": "J7PEhIzWDG5Iqult",
+  "tags": []
+}
