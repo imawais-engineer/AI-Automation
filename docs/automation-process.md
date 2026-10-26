@@ -281,7 +281,7 @@ Execution → If Error → Log Details → Send Alert → Route Manual → Retry
 3. **Plan for Failure** – Every automation can fail; handle it gracefully
 4. **Document Well** – Your future self will thank you
 5. **Monitor Always** – You can't improve what you don't measure
-6. **Iterate** – Launch v1.0, learn, then improve
+6. **Iterate** – Launch v1.0, measure, then improve
 
 ---
 

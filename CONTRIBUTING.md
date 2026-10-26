@@ -6,7 +6,7 @@ Thank you for your interest in this portfolio project!
 
 This is a **portfolio showcase** demonstrating automation workflow design and implementation. You can:
 
-- **Learn** from the workflow designs
+- **Reuse and adapt** the workflow designs
 - **Test** the workflows in your own n8n, Make, or Zapier instance
 - **Adapt** the workflows for your own use cases
 - **Share** feedback on the portfolio
@@ -64,7 +64,7 @@ If you'd like to contribute a new workflow:
 ## Code of Conduct
 
 - Be respectful and professional
-- Focus on helping others learn automation
+- Focus on helping others ship reliable automation
 - Do not share confidential client work or sensitive data
 - Do not claim ownership of workflows you did not create
 

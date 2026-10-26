@@ -304,7 +304,7 @@ Let me know if you need anything!
 ✓ **Share knowledge** publicly
 - Write about automation patterns
 - Post workflow tips
-- Share lessons learned
+- Share outcomes and insights
 
 ✓ **Show process** transparently
 - Screenshot your planning
