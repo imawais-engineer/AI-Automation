@@ -26,7 +26,7 @@ How to position this portfolio for Upwork clients and services.
 - **Documentation:** "I document every workflow so you can maintain it"
 - **Testing Approach:** "I test thoroughly with sample data before going live"
 - **Error Handling:** "I build monitoring and alerts into every automation"
-- **Learning:** "I learn new tools and integrations for each project"
+- **Integration range:** "I integrate the tools your business already uses"
 - **Transparency:** "I show you everything—no black boxes"
 
 ### ✗ DON'T
@@ -301,7 +301,7 @@ Let me know if you need anything!
 - Colleagues familiar with your work
 - Past clients (if real)
 
-✓ **Share learning** publicly
+✓ **Share knowledge** publicly
 - Write about automation patterns
 - Post workflow tips
 - Share lessons learned

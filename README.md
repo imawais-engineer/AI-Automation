@@ -8,7 +8,7 @@ These workflows are designed to reduce manual work, connect business tools, impr
 
 ## Disclaimer
 
-These are **portfolio and demo workflows** created for learning, testing, and client demonstration purposes. They do not represent confidential client work or deployed production systems.
+These are **demonstration workflows** built on sample data to show how I design and ship automations. Client work and client data stay private and are not included here.
 
 ---
 
@@ -149,9 +149,10 @@ workflows/
 
 If you have a manual process involving forms, spreadsheets, emails, CRMs, calendars, or repeated app-to-app data movement, I can help design and build an automation.
 
-- **Upwork:** [Hire me on Upwork](https://www.upwork.com/freelancers/~01838e4fc5162aaf52)
-- **Portfolio:** [View my portfolio](https://imawais.engineer)
-- **LinkedIn:** [Connect with me on LinkedIn](https://linkedin.com/in/se-muhammad-awais/)
+- **Portfolio:** [imawais.engineer](https://imawais.engineer)
+- **Upwork:** [Hire me on Upwork](https://www.upwork.com/freelancers/awaisai)
+- **Fiverr:** [Order on Fiverr](https://www.fiverr.com/mawais_pk)
+- **LinkedIn:** [Connect on LinkedIn](https://linkedin.com/in/imawais-engineer)
 - **GitHub:** [View my GitHub projects](https://github.com/imawais-engineer)
 
 ---

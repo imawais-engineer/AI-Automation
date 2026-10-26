@@ -13,7 +13,7 @@ This is a **portfolio showcase** demonstrating automation workflow design and im
 
 ## Using These Workflows
 
-### For Learning
+### For Reference
 - Review the README files in each workflow folder
 - Study the workflow structure and logic
 - Check the screenshots and setup guides

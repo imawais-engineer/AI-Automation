@@ -72,4 +72,4 @@ To reuse this workflow:
 
 ## Disclaimer
 
-This is a portfolio/demo workflow created for learning, testing, and client demonstration purposes. It does not represent confidential client work.
+This is a demonstration workflow built on sample data. It does not contain confidential client work or client data.

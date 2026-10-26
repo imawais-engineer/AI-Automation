@@ -101,7 +101,7 @@ A comprehensive guide to the tools used in this automation portfolio.
 - Starting with automation
 - Using popular SaaS tools
 - Want the simplest interface
-- Team needs quick learning curve
+- Team needs a fast ramp-up
 
 **Limitations:**
 - Limited advanced logic
