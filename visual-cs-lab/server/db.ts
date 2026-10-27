@@ -125,6 +125,23 @@ CREATE TABLE IF NOT EXISTS publish_jobs (
 
 const now = nowIso();
 
+/**
+ * Additive migrations for databases created by an earlier build. Columns are
+ * only added, never dropped, so existing lessons and render history survive.
+ */
+function ensureColumn(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((item) => item.name === column)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  }
+}
+
+ensureColumn('render_jobs', 'expected_frames', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('render_jobs', 'expected_seconds', 'REAL NOT NULL DEFAULT 0');
+ensureColumn('render_jobs', 'storyboard_hash', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('render_jobs', 'snapshot', "TEXT NOT NULL DEFAULT '[]'");
+ensureColumn('render_jobs', 'validation', 'TEXT');
+
 const brandRow = db.prepare('SELECT id FROM brand WHERE id = 1').get();
 if (!brandRow) {
   db.prepare(
@@ -736,15 +753,35 @@ function ensureBinarySearchDemo(): void {
     }
   }
 
-  // Build the storyboard once, so the demo lesson opens renderable. Later edits
-  // (timing, captions, hook) still have to be rebuilt by hand.
-  const lesson = db
-    .prepare('SELECT * FROM lessons WHERE concept_id = ? ORDER BY created_at LIMIT 1')
-    .get(concept.id) as (LessonInput & { scenes: string }) | undefined;
   const conceptRow = db.prepare('SELECT * FROM concepts WHERE id = ?').get(concept.id) as ConceptInput | undefined;
-  const stored = lesson ? safeParse(lesson.scenes) : null;
-  const hasStoryboard = Array.isArray(stored) && stored.length > 0;
-  if (lesson && conceptRow && !hasStoryboard) {
+  if (!conceptRow) return;
+
+  /**
+   * Every lesson of this concept keeps a usable storyboard. Storyboards built by
+   * the previous builder stored the whole narration as the trace caption and had
+   * no complexity facts; they are replaced only when provably untouched (caption
+   * still equals the narration, no duplicated scenes), so hand edits survive.
+   */
+  const isLegacyStoryboard = (stored: { type?: string; caption?: string; id?: string; facts?: unknown[] }[], lesson: LessonInput): boolean => {
+    const traceScene = stored.find((scene) => scene.type === 'trace');
+    const complexityScene = stored.find((scene) => scene.type === 'complexity');
+    return (
+      Boolean(traceScene) &&
+      traceScene?.caption === lesson.narration &&
+      !(Array.isArray(complexityScene?.facts) && complexityScene!.facts!.length > 0) &&
+      !stored.some((scene) => String(scene.id || '').includes('-copy-'))
+    );
+  };
+
+  const lessons = db.prepare('SELECT * FROM lessons WHERE concept_id = ?').all(concept.id) as (LessonInput & {
+    scenes: string;
+  })[];
+  for (const lesson of lessons) {
+    const stored = safeParse(lesson.scenes);
+    const list = Array.isArray(stored)
+      ? (stored as { type?: string; caption?: string; id?: string; facts?: unknown[] }[])
+      : [];
+    if (list.length > 0 && !isLegacyStoryboard(list, lesson)) continue;
     const scenes = buildScenes(lesson, conceptRow);
     db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
       JSON.stringify(scenes),
@@ -779,6 +816,7 @@ export type Brand = {
   default_resolution: string;
   intro: string;
   outro: string;
+  updated_at: string;
 };
 
 export function readBrand(): Brand {

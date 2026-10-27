@@ -1,7 +1,7 @@
 import type { SKRSContext2D } from '@napi-rs/canvas';
 
 import type { BinarySearchVisual, Scene } from '../scenes.ts';
-import { easeOut, lerp, mix, rgba, roundRect } from './paint.ts';
+import { easeOut, lerp, mix, rgba, roundRect, wrap } from './paint.ts';
 import { MONO, SANS } from './typography.ts';
 
 
@@ -96,12 +96,40 @@ export function drawBinarySearchPanel(opts: BinaryPanelOptions): number {
     }
   }
 
-  ctx.font = `800 ${Math.round(46 * k)}px ${SANS}`;
-  ctx.fillStyle = matched ? foundColor : accent;
-  ctx.fillText(status, pad, statusY);
-  ctx.font = `600 ${Math.round(27 * k)}px ${MONO}`;
-  ctx.fillStyle = rgba(ink, 0.68);
-  ctx.fillText(action, pad, statusY + Math.round(46 * k));
+  /**
+   * Shrinks, then wraps, so a long status line never crosses the safe margin.
+   * Returns the baseline below the drawn text.
+   */
+  const fitted = (
+    text: string,
+    y: number,
+    size: number,
+    weight: number,
+    color: string,
+    family: string,
+    maxLines = 2
+  ): number => {
+    const min = Math.round(size * 0.62 * k);
+    let px = Math.round(size * k);
+    const fontOf = (value: number) => `${weight} ${value}px ${family}`;
+    ctx.font = fontOf(px);
+    while (px > min && ctx.measureText(text).width > opts.maxWidth) {
+      px -= Math.max(1, Math.round(2 * k));
+      ctx.font = fontOf(px);
+    }
+    ctx.fillStyle = color;
+    if (ctx.measureText(text).width > opts.maxWidth) {
+      const lines = wrap(ctx, text, opts.maxWidth, maxLines);
+      const lineHeight = Math.round(px * 1.22);
+      lines.forEach((line, index) => ctx.fillText(line, pad, y + index * lineHeight));
+      return y + (lines.length - 1) * lineHeight;
+    }
+    ctx.fillText(text, pad, y);
+    return y;
+  };
+
+  const statusBaseline = fitted(status, statusY, 46, 800, matched ? foundColor : accent, SANS);
+  fitted(action, statusBaseline + Math.round(42 * k), 27, 600, rgba(ink, 0.68), MONO);
 
   // array geometry
   const gap = Math.round(14 * k);

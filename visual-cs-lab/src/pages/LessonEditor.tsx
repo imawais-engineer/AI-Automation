@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
-import { api, formatBytes, type Brand, type Concept, type Lesson, type PublishJob, type RenderJob, type Scene } from '../api';
+import {
+  api,
+  formatBytes,
+  type Brand,
+  type Concept,
+  type Lesson,
+  type Pipeline,
+  type PublishJob,
+  type RenderJob,
+  type Scene
+} from '../api';
+import PipelineStrip from '../components/PipelineStrip';
+import RenderQuality from '../components/RenderQuality';
+import SceneTimeline from '../components/SceneTimeline';
 
 type Detail = {
   lesson: Lesson;
@@ -10,13 +23,14 @@ type Detail = {
   scenes: Scene[];
   renders: RenderJob[];
   publishes: PublishJob[];
+  pipeline: Pipeline;
 };
 
 const DURATIONS = [10, 20, 30, 45, 60];
 const PRESETS: { key: 'preview' | 'hd' | '4k'; label: string; note: string }[] = [
-  { key: 'preview', label: 'Preview', note: '540×960 · renders locally · use this while iterating' },
-  { key: 'hd', label: 'HD', note: '1080×1920 · renders locally · publish-ready' },
-  { key: '4k', label: '4K', note: '2160×3840 · renders locally · slow, run it after HD looks right' }
+  { key: 'preview', label: 'Preview', note: '540×960 · 30 fps · fast iteration' },
+  { key: 'hd', label: 'HD', note: '1080×1920 · 30 fps · default publication output' },
+  { key: '4k', label: '4K', note: '2160×3840 · 30 fps · optional master, slow' }
 ];
 
 const ACTIVE = ['queued', 'rendering', 'encoding', 'validating'];
@@ -54,6 +68,7 @@ export default function LessonEditor() {
   const [stamp, setStamp] = useState(Date.now());
   const [brand, setBrand] = useState<Brand | null>(null);
   const [sceneDrafts, setSceneDrafts] = useState<Record<string, SceneDraft>>({});
+  const [pipeline, setPipeline] = useState<Pipeline | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -63,6 +78,7 @@ export default function LessonEditor() {
       setSceneDrafts(sceneDraftMap(data.scenes));
       setRenders(data.renders);
       setIssues(data.issues);
+      setPipeline(data.pipeline);
       setDraft({
         title: data.lesson.title,
         audience: data.lesson.audience,
@@ -171,6 +187,44 @@ export default function LessonEditor() {
     }
   }
 
+  async function persistOrder(order: string[]) {
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/lessons/${id}/scenes`, { method: 'PATCH', body: JSON.stringify({ order }) });
+      await load();
+      setStamp(Date.now());
+      setNotice('Scene order saved.');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function moveScene(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= scenes.length) return;
+    const next = [...scenes];
+    [next[index], next[target]] = [next[target], next[index]];
+    void persistOrder(next.map((scene) => scene.id));
+  }
+
+  async function duplicateScene(sceneId: string) {
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/lessons/${id}/scenes/${sceneId}/duplicate`, { method: 'POST' });
+      await load();
+      setStamp(Date.now());
+      setNotice('Scene duplicated. Adjust the timings so the total matches the lesson duration.');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function startRender() {
     setError('');
     setNotice('');
@@ -180,6 +234,16 @@ export default function LessonEditor() {
         body: JSON.stringify({ lessonId: id, preset })
       });
       setRenders((current) => [data.job, ...current]);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function cancel(jobId: string) {
+    try {
+      await api(`/api/renders/${jobId}/cancel`, { method: 'POST' });
+      const data = await api<{ renders: RenderJob[] }>(`/api/renders?lessonId=${id}`);
+      setRenders(data.renders);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -196,6 +260,7 @@ export default function LessonEditor() {
   }
 
   const totalMs = useMemo(() => scenes.reduce((sum, scene) => sum + scene.durationMs, 0), [scenes]);
+  const latestDone = useMemo(() => renders.find((job) => job.state === 'done') || null, [renders]);
 
   const draftTotalMs = useMemo(
     () =>
@@ -243,6 +308,8 @@ export default function LessonEditor() {
 
       {error && <div className="notice bad">{error}</div>}
       {notice && <div className="notice good">{notice}</div>}
+
+      {pipeline && <PipelineStrip pipeline={pipeline} />}
 
       {blocking.length > 0 && (
         <div className="notice bad">
@@ -371,6 +438,11 @@ export default function LessonEditor() {
             >
               {hasActive ? 'Render in progress…' : 'Render MP4'}
             </button>
+            {latestDone && (
+              <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+                <RenderQuality job={latestDone} />
+              </div>
+            )}
           </div>
 
           <div className="card tight">
@@ -404,6 +476,16 @@ export default function LessonEditor() {
                     </span>
                   </div>
                 )}
+                {ACTIVE.includes(job.state) && (
+                  <div className="row">
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      {job.frames}/{job.expected_frames || '—'} frames
+                    </span>
+                    <button className="btn ghost" onClick={() => cancel(job.id)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
                 {job.state === 'error' && (
                   <>
                     <p style={{ color: 'var(--bad)', fontSize: 12.5 }}>{job.error}</p>
@@ -434,24 +516,14 @@ export default function LessonEditor() {
             </button>
           </div>
         ) : (
-          <div className="storyboard">
-            {scenes.map((scene, index) => (
-              <div className="scene-card" key={scene.id}>
-                <img
-                  src={`/api/lessons/${id}/scene/${index}.png?v=${stamp}`}
-                  alt={`${scene.type} scene preview`}
-                  loading="lazy"
-                />
-                <div className="body">
-                  <span className="type">
-                    {scene.type} · {(scene.durationMs / 1000).toFixed(1)}s
-                  </span>
-                  <span style={{ fontSize: 12.5 }}>{scene.title}</span>
-                  <span className="cap">{scene.caption || scene.subtitle}</span>
-                </div>
-              </div>
-            ))}
-          </div>
+          <SceneTimeline
+            lessonId={id as string}
+            scenes={scenes}
+            stamp={stamp}
+            busy={busy}
+            onMove={moveScene}
+            onDuplicate={duplicateScene}
+          />
         )}
       </section>
 

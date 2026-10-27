@@ -663,3 +663,149 @@ pre.code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* pipeline + quality */
+.pipeline-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pipeline-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 11px 4px 9px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.pipeline-step .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.pipeline-step.done {
+  color: var(--ink);
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.pipeline-step.done .dot {
+  background: var(--good);
+}
+
+.pipeline-step.current {
+  color: var(--accent);
+  border-color: rgba(167, 139, 250, 0.5);
+  background: var(--accent-soft);
+}
+
+.pipeline-step.current .dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.18);
+}
+
+.pipeline-step.blocked {
+  opacity: 0.55;
+}
+
+.check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.check-list li {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.check-list li .mark {
+  font-weight: 700;
+}
+
+.check-list li.ok .mark {
+  color: var(--good);
+}
+
+.check-list li.bad .mark {
+  color: var(--bad);
+}
+
+.check-list li strong {
+  display: block;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.check-list li em {
+  font-style: normal;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.render-quality {
+  display: grid;
+  gap: 10px;
+}
+
+.player {
+  width: 100%;
+  max-height: 420px;
+  border-radius: 10px;
+  background: #0b0d12;
+  border: 1px solid var(--line);
+}
+
+.scene-thumb {
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  display: block;
+}
+
+.scene-thumb .play {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--ink);
+  background: rgba(8, 10, 16, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.scene-video {
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  object-fit: cover;
+  background: #0e1015;
+  display: block;
+}

@@ -11,11 +11,26 @@ import {
   lessonIssues,
   runConcept,
   safeJson,
+  storyboardHash,
   type ConceptInput,
   type LessonInput,
   type Scene
 } from './scenes.ts';
-import { createJob, lessonBundle, PRESETS, resumeOnBoot, retryJob, scenesFor, thumbnail, type Preset, type RenderJob } from './render/jobs.ts';
+import { lessonPipeline } from './pipeline.ts';
+import { parseValidation } from './render/quality.ts';
+import {
+  cancelJob,
+  createJob,
+  lessonBundle,
+  PRESETS,
+  resumeOnBoot,
+  retryJob,
+  sceneClip,
+  scenesFor,
+  thumbnail,
+  type Preset,
+  type RenderJob
+} from './render/jobs.ts';
 
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
@@ -85,18 +100,36 @@ app.get('/api/overview', (_req, res) => {
     rendersFailed: one("SELECT COUNT(*) AS n FROM render_jobs WHERE state = 'error'"),
     rendersActive: one("SELECT COUNT(*) AS n FROM render_jobs WHERE state IN ('queued','rendering','encoding','validating')"),
     awaitingReview: one("SELECT COUNT(*) AS n FROM lessons WHERE review_status = 'in_review'"),
-    readyToPublish: one(
-      `SELECT COUNT(*) AS n FROM lessons
-       WHERE review_status = 'approved'
-         AND EXISTS (SELECT 1 FROM render_jobs r WHERE r.lesson_id = lessons.id AND r.state = 'done')
-         AND NOT EXISTS (SELECT 1 FROM publish_jobs p WHERE p.lesson_id = lessons.id AND p.status = 'published')`
-    ),
+    // Ready to publish means: approved by a human AND a render that passed every
+    // automated quality check. A finished job alone is not enough.
+    readyToPublish: new Set(
+      (
+        db
+          .prepare(
+            `SELECT r.lesson_id, r.validation FROM render_jobs r
+             JOIN lessons l ON l.id = r.lesson_id
+             WHERE l.review_status = 'approved' AND r.state = 'done'`
+          )
+          .all() as { lesson_id: string; validation: string | null }[]
+      )
+        .filter((row) => parseValidation(row.validation)?.ok)
+        .map((row) => row.lesson_id)
+    ).size,
+    qualityCheckedRenders: (
+      db.prepare("SELECT validation FROM render_jobs WHERE state = 'done'").all() as { validation: string | null }[]
+    ).filter((row) => parseValidation(row.validation)?.ok).length,
     published: one("SELECT COUNT(*) AS n FROM publish_jobs WHERE status = 'published'"),
     recentLessons,
     recentJobs,
     environment: {
-      renderer: 'canvas + ffmpeg (local worker in this service)',
-      presets: Object.entries(PRESETS).map(([key, value]) => ({ key, label: value.label })),
+      renderer: 'in-process worker: Skia frames → ffmpeg H.264, validated on the encoded file',
+      presets: Object.entries(PRESETS).map(([key, value]) => ({
+        key,
+        label: value.label,
+        width: value.width,
+        height: value.height,
+        fps: value.fps
+      })),
       persistent: Boolean(process.env.DATA_DIR)
     }
   });
@@ -289,17 +322,21 @@ app.get('/api/lessons/:id', (req, res) => {
   const concept = requireConcept(lesson.concept_id);
   if (!concept) return res.status(404).json({ error: 'Concept not found.' });
   const issues = lessonIssues(lesson, concept);
+  const scenes = scenesFor(req.params.id) || [];
+  const renders = db
+    .prepare('SELECT * FROM render_jobs WHERE lesson_id = ? ORDER BY created_at DESC')
+    .all(req.params.id) as RenderJob[];
   res.json({
     lesson: { ...lesson, scenes: safeJson<Scene[]>(lesson.scenes, []) },
     concept,
     issues,
-    scenes: scenesFor(req.params.id) || [],
-    renders: db
-      .prepare('SELECT * FROM render_jobs WHERE lesson_id = ? ORDER BY created_at DESC')
-      .all(req.params.id),
+    scenes,
+    storyboardHash: storyboardHash(scenes),
+    renders,
     publishes: db
       .prepare('SELECT * FROM publish_jobs WHERE lesson_id = ? ORDER BY created_at DESC')
-      .all(req.params.id)
+      .all(req.params.id),
+    pipeline: lessonPipeline({ lesson, concept, scenes, issues, renders })
   });
 });
 
@@ -355,7 +392,12 @@ app.patch('/api/lessons/:id/scenes', (req, res) => {
   if (current.length === 0) {
     return res.status(400).json({ error: 'Generate the storyboard before editing scene timings.' });
   }
-  const incoming = req.body?.scenes;
+  // A reorder-only save sends `order` and no scene patches.
+  const incoming = Array.isArray(req.body?.scenes)
+    ? req.body.scenes
+    : req.body?.order !== undefined
+      ? []
+      : null;
   if (!Array.isArray(incoming)) return res.status(400).json({ error: 'Send the edited scenes as an array.' });
 
   const patches = new Map<string, Record<string, unknown>>();
@@ -365,7 +407,7 @@ app.patch('/api/lessons/:id/scenes', (req, res) => {
     if (typeof item.id === 'string' && item.id) patches.set(item.id, item);
   }
 
-  const next = current.map((scene) => {
+  let next = current.map((scene) => {
     const patch = patches.get(scene.id);
     if (!patch) return scene;
     const duration = Number(patch.durationMs);
@@ -380,6 +422,23 @@ app.patch('/api/lessons/:id/scenes', (req, res) => {
   });
   const unknownIds = Array.from(patches.keys()).filter((id) => !current.some((scene) => scene.id === id)).length;
 
+  // Reordering: the client sends the full id order, which must be a permutation.
+  if (req.body?.order !== undefined) {
+    const order: string[] | null = Array.isArray(req.body.order)
+      ? (req.body.order as unknown[]).map((value) => String(value))
+      : null;
+    const known = new Set(next.map((scene) => scene.id));
+    if (
+      !order ||
+      order.length !== next.length ||
+      new Set(order).size !== order.length ||
+      order.some((id) => !known.has(id))
+    ) {
+      return res.status(400).json({ error: 'The new scene order must list every scene exactly once.' });
+    }
+    next = order.map((id) => next.find((scene) => scene.id === id) as Scene);
+  }
+
   db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
     JSON.stringify(next),
     nowIso(),
@@ -387,6 +446,32 @@ app.patch('/api/lessons/:id/scenes', (req, res) => {
   );
   const updated = { ...lesson, scenes: JSON.stringify(next) };
   res.json({ scenes: next, issues: lessonIssues(updated, concept), unknownIds });
+});
+
+/** Duplicates one scene directly after itself, so a beat can be repeated. */
+app.post('/api/lessons/:id/scenes/:sceneId/duplicate', (req, res) => {
+  const lesson = requireLesson(req.params.id);
+  if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
+  const concept = requireConcept(lesson.concept_id);
+  if (!concept) return res.status(404).json({ error: 'Concept not found.' });
+
+  const current = safeJson<Scene[]>(lesson.scenes, []);
+  const index = current.findIndex((scene) => scene.id === req.params.sceneId);
+  if (index < 0) return res.status(404).json({ error: 'Scene not found in this storyboard.' });
+
+  const source = current[index];
+  const copy: Scene = {
+    ...source,
+    id: `${source.id}-copy-${Date.now().toString(36).slice(-4)}`
+  };
+  const next = [...current.slice(0, index + 1), copy, ...current.slice(index + 1)];
+  db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
+    JSON.stringify(next),
+    nowIso(),
+    lesson.id
+  );
+  const updated = { ...lesson, scenes: JSON.stringify(next) };
+  res.status(201).json({ scenes: next, issues: lessonIssues(updated, concept) });
 });
 
 app.get('/api/lessons/:id/scene/:index.png', (req, res) => {
@@ -397,6 +482,17 @@ app.get('/api/lessons/:id/scene/:index.png', (req, res) => {
   res.setHeader('Content-Type', 'image/png');
   res.setHeader('Cache-Control', 'no-store');
   res.end(png);
+});
+
+/** Real motion preview of a single scene, encoded at preview resolution and cached. */
+app.get('/api/lessons/:id/scene/:index/clip.mp4', async (req, res) => {
+  const index = Number(req.params.index);
+  if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid scene index.' });
+  const result = await sceneClip(req.params.id, index, 540);
+  if (!result.file) return res.status(500).json({ error: result.error || 'Scene preview failed.' });
+  res.type('video/mp4');
+  res.setHeader('Cache-Control', 'public, max-age=600');
+  res.sendFile(result.file);
 });
 
 /* --------------------------------------------------------------------- brand */
@@ -446,13 +542,30 @@ app.get('/api/renders', (req, res) => {
 app.get('/api/renders/:id', (req, res) => {
   const job = db.prepare('SELECT * FROM render_jobs WHERE id = ?').get(req.params.id) as RenderJob | undefined;
   if (!job) return res.status(404).json({ error: 'Render job not found.' });
-  res.json({ job });
+  res.json({ job, validation: parseValidation(job.validation) });
 });
 
 app.post('/api/renders/:id/retry', (req, res) => {
   const result = retryJob(req.params.id);
   if (result.error) return res.status(400).json({ error: result.error });
   res.json({ job: result.job });
+});
+
+app.post('/api/renders/:id/cancel', (req, res) => {
+  const result = cancelJob(req.params.id);
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json({ job: result.job });
+});
+
+/** Inline playback for the preview player; the download route stays a download. */
+app.get('/api/renders/:id/stream', (req, res) => {
+  const job = db.prepare('SELECT * FROM render_jobs WHERE id = ?').get(req.params.id) as RenderJob | undefined;
+  if (!job || job.state !== 'done' || !job.output_path) {
+    return res.status(404).json({ error: 'This render has no finished MP4 yet.' });
+  }
+  res.type('video/mp4');
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(job.output_path);
 });
 
 app.get('/api/renders/:id/video', (req, res) => {

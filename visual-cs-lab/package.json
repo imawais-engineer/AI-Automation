@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx server/index.ts",
     "start": "tsx server/index.ts",
-    "test": "node --import tsx --test server/algorithms/*.test.ts server/*.test.ts",
+    "test": "node --import tsx --test server/algorithms/*.test.ts server/render/*.test.ts server/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   DEFAULT_STACK_OPS,
   parseOps,
@@ -47,6 +49,8 @@ export type Scene = {
   caption: string;
   code?: { language: string; lines: string[]; highlight: number };
   visual?: SceneVisual;
+  /** Short labelled facts drawn as cards (complexity scenes). */
+  facts?: { label: string; value: string }[];
 };
 
 export type LessonInput = {
@@ -62,6 +66,8 @@ export type LessonInput = {
   key_takeaway: string;
   cta: string;
   sources: string;
+  /** Human review state: draft, in_review or approved. */
+  review_status?: string;
   /** Stored storyboard, JSON encoded. */
   scenes: string;
 };
@@ -285,7 +291,11 @@ function buildStackScenes(lesson: LessonInput, concept: ConceptInput, run: Conce
         type: 'complexity',
         title: 'Complexity',
         subtitle: concept.complexity_time,
-        caption: `${concept.complexity_time}. Space: ${concept.complexity_space}.`
+        caption: `${concept.complexity_time}. Space: ${concept.complexity_space}.`,
+        facts: [
+          { label: 'Auxiliary space', value: concept.complexity_space || 'O(1)' },
+          { label: 'Rule', value: 'Only the top element is touched.' }
+        ]
       }
     },
     {
@@ -352,7 +362,9 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
         type: 'trace',
         title: `Trace · target ${target}`,
         subtitle: 'low, high and mid · mid = floor((low + high) / 2)',
-        caption: lesson.narration || '',
+        // Short enough to read inside 7 seconds with the sound off; the panel
+        // already names the comparison and the bound that moves.
+        caption: 'Compare the midpoint · keep the half that can still hold the target.',
         visual: { ...setup, mode: 'trace', steps: run.steps }
       }
     },
@@ -362,7 +374,11 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
         type: 'complexity',
         title: lesson.key_takeaway,
         subtitle: concept.complexity_time,
-        caption: `Space: ${concept.complexity_space} auxiliary for this iterative version.`
+        caption: `Space: ${concept.complexity_space} auxiliary for this iterative version.`,
+        facts: [
+          { label: 'Auxiliary space', value: concept.complexity_space || 'O(1)' },
+          { label: 'Precondition', value: 'Input must be sorted' }
+        ]
       }
     },
     {
@@ -413,6 +429,26 @@ function traceSignature(steps: BinarySearchStep[]): string {
   return steps.map((step) => `${step.low}:${step.high}:${step.mid}:${step.comparison}:${step.nextLow}:${step.nextHigh}`).join('|');
 }
 
+/**
+ * Stable fingerprint of a stored storyboard. A render job keeps this so its MP4
+ * can be matched to the exact scenes that produced it, even after later edits.
+ */
+export function storyboardHash(scenes: Scene[]): string {
+  const payload = JSON.stringify(
+    scenes.map((scene) => ({
+      id: scene.id,
+      type: scene.type,
+      durationMs: scene.durationMs,
+      title: scene.title,
+      subtitle: scene.subtitle,
+      caption: scene.caption,
+      code: scene.code ?? null,
+      visual: scene.visual ?? null
+    }))
+  );
+  return createHash('sha1').update(payload).digest('hex');
+}
+
 function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: ConceptRun, seconds: number): string[] {
   const issues: string[] = [];
   const stored = safeJson<Scene[]>(lesson.scenes || '[]', []);
@@ -420,10 +456,13 @@ function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: Conce
     return ['The lesson has no storyboard yet — build it from the verified trace.'];
   }
 
-  const expected = buildScenes(lesson, concept);
-  if (expected.map((scene) => scene.type).join(',') !== stored.map((scene) => scene.type).join(',')) {
+  // Reordering and duplicating scenes is allowed, so the check is that every
+  // scene the plan needs is still present — not that the order is untouched.
+  const required = Array.from(new Set(buildScenes(lesson, concept).map((scene) => scene.type)));
+  const missing = required.filter((type) => !stored.some((scene) => scene.type === type));
+  if (missing.length > 0) {
     return [
-      `The storyboard (${stored.length} scenes) no longer matches the lesson's scene sequence — rebuild the storyboard.`
+      `The storyboard is missing its ${missing.join(', ')} scene${missing.length === 1 ? '' : 's'} — rebuild the storyboard.`
     ];
   }
 

@@ -65,6 +65,7 @@ export type Scene = {
   caption: string;
   code?: { language: string; lines: string[]; highlight: number };
   visual?: StackVisual | BinarySearchVisual;
+  facts?: { label: string; value: string }[];
 };
 
 export type Lesson = {
@@ -87,6 +88,15 @@ export type Lesson = {
   concept_slug?: string;
 };
 
+export type RenderState =
+  | 'queued'
+  | 'rendering'
+  | 'encoding'
+  | 'validating'
+  | 'done'
+  | 'error'
+  | 'cancelled';
+
 export type RenderJob = {
   id: string;
   lesson_id: string;
@@ -94,15 +104,57 @@ export type RenderJob = {
   width: number;
   height: number;
   fps: number;
-  state: 'queued' | 'rendering' | 'encoding' | 'validating' | 'done' | 'error';
+  state: RenderState;
   progress: number;
   log: string;
   error: string | null;
   bytes: number;
   duration_seconds: number;
   frames: number;
+  expected_frames: number;
+  expected_seconds: number;
+  storyboard_hash: string;
+  validation: string | null;
   created_at: string;
+  finished_at: string | null;
   lesson_title?: string;
+};
+
+export type MediaInfo = {
+  container: string;
+  codec: string;
+  pixelFormat: string;
+  width: number;
+  height: number;
+  durationSeconds: number;
+  hasAudio: boolean;
+};
+
+export type RenderCheck = { id: string; label: string; ok: boolean; detail: string };
+
+export type RenderValidation = {
+  ok: boolean;
+  media: MediaInfo | null;
+  checks: RenderCheck[];
+  humanReview: string[];
+  validatedAt: string;
+};
+
+export type PipelineStage =
+  | 'draft'
+  | 'trace_verified'
+  | 'storyboard_ready'
+  | 'rendered'
+  | 'quality_checked'
+  | 'ready_to_publish';
+
+export type Pipeline = {
+  stage: PipelineStage;
+  label: string;
+  steps: { key: PipelineStage; label: string; status: 'done' | 'current' | 'blocked'; detail: string }[];
+  render: (RenderJob & { parsed: RenderValidation | null }) | null;
+  checklist: { key: string; label: string; kind: 'auto' | 'manual'; ok: boolean | null; detail: string }[];
+  readyToPublish: boolean;
 };
 
 export type Brand = {

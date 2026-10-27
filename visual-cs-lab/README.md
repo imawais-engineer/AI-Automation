@@ -34,11 +34,36 @@ Two vertical slices are complete end to end, each from concept to downloaded fil
 5. Validate the trace against the concept's expected results — a mismatch blocks rendering.
 6. Build scenes (`server/scenes.ts`): hook, concept, implementation, one scene per event,
    complexity, summary, brand. Binary Search uses its own five-scene plan.
-7. Render frames (`server/render/draw.ts`) from the **stored** storyboard, so edited
-   timings and captions reach the file.
-8. Encode and stream to ffmpeg.
-9. Probe the output: resolution must match the preset, duration must match the storyboard within 0.75 s.
-10. Only then mark the job `done`; anything else is a failed job with a readable log and a retry button.
+7. Snapshot the stored storyboard into the job, so the MP4 always matches the
+   scenes that were validated at enqueue time.
+8. Render frames (`server/render/draw.ts`) from that snapshot, allocating frames per
+   scene with largest-remainder maths: a 20 s lesson at 30 fps is exactly 600
+   frames, never 599 or 601.
+9. Encode and stream to ffmpeg (H.264, `yuv420p`, `+faststart`, no audio track).
+10. Validate the encoded file (`server/render/quality.ts`): MP4 container, H.264,
+    yuv420p, even dimensions, exact resolution, duration within one frame, a full
+    decode pass whose frame count matches the timeline, and three sampled frames
+    (10 % / 50 % / 90 %) that are neither blank nor a repeated still.
+11. Only then mark the job `done`; anything else is a failed job with the failing
+    check, a readable log and a retry button.
+
+## Render lifecycle and the quality gate
+
+`queued → rendering → encoding → validating → done`, plus `error` and `cancelled`.
+
+Each job stores the lesson id, output profile, resolution, frame rate, expected
+duration and frame count, storyboard hash, the scene snapshot, progress based on
+frames actually written, timestamps, output path, byte size, media metadata and the
+full validation report. Only one job renders at a time (the worker is a single
+in-process pump), frames are streamed and never collected into an array, and a
+second queued render for the same lesson is rejected.
+
+`server/pipeline.ts` derives the lesson stage from that data — `draft`,
+`trace_verified`, `storyboard_ready`, `rendered`, `quality_checked`,
+`ready_to_publish` — and a lesson only becomes **ready to publish** when a
+quality-checked render exists *and* the review status is approved. Machine checks
+cannot judge legibility or educational accuracy, so those stay on the publication
+checklist as explicit human-review items instead of being reported as passed.
 
 ## API
 
@@ -50,11 +75,15 @@ Two vertical slices are complete end to end, each from concept to downloaded fil
 | `POST /api/concepts/:id/trace` | Run the trusted trace (visualizer + validation) |
 | `GET/POST /api/lessons`, `PATCH /api/lessons/:id` | Lesson scripts |
 | `POST /api/lessons/:id/storyboard` | Build and store scenes from the verified trace |
-| `PATCH /api/lessons/:id/scenes` | Edit stored scene durations and narration (re-validated) |
+| `PATCH /api/lessons/:id/scenes` | Edit stored scene durations and captions, and/or reorder (`order: [ids]`) |
+| `POST /api/lessons/:id/scenes/:sceneId/duplicate` | Duplicate a scene after itself |
 | `GET /api/lessons/:id/scene/:i.png` | Real rendered storyboard frame |
+| `GET /api/lessons/:id/scene/:i/clip.mp4` | Motion preview of one scene (cached encode) |
 | `GET/PATCH /api/brand` | Brand template read by the renderer |
-| `POST /api/renders`, `GET /api/renders/:id` | Render jobs, progress, logs, errors |
-| `GET /api/renders/:id/video` | The finished MP4 |
+| `POST /api/renders`, `GET /api/renders/:id` | Render jobs, progress, logs, errors, validation report |
+| `POST /api/renders/:id/cancel` | Cancel a queued or in-flight job |
+| `GET /api/renders/:id/stream` | Inline playback of the finished MP4 |
+| `GET /api/renders/:id/video` | The finished MP4 as a download |
 | `GET/POST /api/publishes`, `PATCH /api/publishes/:id` | Manual publishing queue per platform |
 
 ## Binary Search (end-to-end slice)
@@ -98,6 +127,28 @@ The trace scene animates inside a single scene: every verified step gets an equa
 slice, showing the comparison and pointers first, then fading the eliminated half and
 moving `low`/`high`.
 
+## Editor, motion and output profiles
+
+The storyboard section shows a real frame per scene; each card can play that scene's
+actual motion (a cached mp4 encoded by the same engine as the export) and can be moved
+earlier/later or duplicated. Reordering keeps the storyboard valid; duplicating adds
+time, so the timeline total has to be rebalanced before rendering.
+
+Output profiles (`server/render/profiles.ts`), all vertical 9:16 at 30 fps:
+
+| Profile | Resolution | Purpose |
+| --- | --- | --- |
+| Preview | 540 × 960 | Fast iteration and scene previews |
+| HD | 1080 × 1920 | Default publication output |
+| 4K | 2160 × 3840 | Optional master; slow, more memory |
+
+Motion comes from scene time only (`drawFrame` is a pure function of scene, frame time
+and brand), so a re-render is deterministic: content fades and rises in, the accent rule
+under a hook grows, code lines stagger, complexity facts slide in as cards, the match
+pulses, the brand mark and underline sweep, and captions slide up. Each scene fades out
+over its last 200 ms so transitions never hide an algorithm state. Long status text in
+the trace panel is measured and shrunk/wrapped inside the safe margin.
+
 Frames are drawn with Skia (`@napi-rs/canvas`), which draws **no text at all** when the
 machine has no fonts — the slim Node image has none. The app therefore registers the
 bundled `dejavu-fonts-ttf` faces at boot (`server/render/typography.ts`); no system
@@ -116,17 +167,26 @@ MP4 or a failed job with an error.
 ```bash
 npm install
 npm run dev        # http://localhost:3000
-npm test           # trusted traces, storyboard timing and lesson validation tests
+npm test           # traces, storyboard timing, frame maths, output quality, pipeline
 npm run typecheck
 ```
+
+Test files cover the trusted algorithms (`server/algorithms/*.test.ts`), storyboard
+construction and lesson validation (`server/scenes.test.ts`), frame allocation and
+profiles (`server/render/profiles.test.ts`), the file-level quality checks
+(`server/render/quality.test.ts`) and the stage derivation (`server/pipeline.test.ts`).
 
 Environment variables: `PORT` (3000), `DATA_DIR` (SQLite), `MEDIA_DIR` (MP4 output).
 
 ## Known gaps (deliberately not faked)
 
-- Only Stacks and Binary Search have a trusted animation configuration; other concepts
-  can be read and turned into lessons, but rendering is blocked until a trace exists
-  for them.
+- Only Stacks and Binary Search have a trusted animation configuration; Linear Search,
+  Bubble Sort and tree/graph primitives are **planned**, not implemented. Rendering is
+  blocked for every concept without a verified trace.
+- The renderer runs in-process (one job at a time). There is no external render worker:
+  this sandbox has no Chromium, and a Remotion/Chrome worker would need its own host.
+- 4K is selectable but has only been validated at HD; expect a slow render and more
+  memory, and check the output before publishing it.
 - AI-assisted drafting is not wired yet; `OPENAI_API_KEY` / `OPENAI_BASE_URL` are
   stored for that phase and nothing reads them.
 - Automated publishing and platform analytics APIs are not implemented; the queue is

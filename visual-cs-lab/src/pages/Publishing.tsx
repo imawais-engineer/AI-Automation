@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { api, type Lesson, type PublishJob, type RenderJob } from '../api';
+import { api, type Lesson, type Pipeline, type PublishJob, type RenderJob, type RenderValidation } from '../api';
+
+function qualityOf(job: RenderJob): RenderValidation | null {
+  if (!job.validation) return null;
+  try {
+    const parsed = JSON.parse(job.validation) as RenderValidation;
+    return Array.isArray(parsed.checks) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 const PLATFORMS = [
   { key: 'instagram', label: 'Instagram Reels' },
@@ -25,6 +35,7 @@ export default function Publishing() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [edits, setEdits] = useState<Record<string, Partial<PublishJob>>>({});
+  const [pipeline, setPipeline] = useState<Pipeline | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -49,6 +60,9 @@ export default function Publishing() {
     api<{ renders: RenderJob[] }>(`/api/renders?lessonId=${lessonId}`)
       .then((data) => setRenders(data.renders.filter((job) => job.state === 'done')))
       .catch(() => setRenders([]));
+    api<{ pipeline: Pipeline }>(`/api/lessons/${lessonId}`)
+      .then((data) => setPipeline(data.pipeline))
+      .catch(() => setPipeline(null));
   }, [lessonId]);
 
   const lesson = lessons.find((item) => item.id === lessonId);
@@ -146,8 +160,10 @@ export default function Publishing() {
 
       <div className="card tight">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <h3>Validated renders</h3>
-          <span className="badge">{renders.length} available</span>
+          <h3>Rendered files</h3>
+          <span className={`badge ${pipeline?.readyToPublish ? 'good' : 'warn'}`}>
+            {pipeline ? pipeline.label : 'no render'}
+          </span>
         </div>
         {renders.length === 0 ? (
           <p style={{ color: 'var(--muted)' }}>
@@ -155,14 +171,49 @@ export default function Publishing() {
           </p>
         ) : (
           <div className="row">
-            {renders.map((job) => (
-              <a key={job.id} className="btn ghost" href={`/api/renders/${job.id}/video`}>
-                Download {job.preset} ({job.width}×{job.height})
-              </a>
-            ))}
+            {renders.map((job) => {
+              const quality = qualityOf(job);
+              return (
+                <a
+                  key={job.id}
+                  className="btn ghost"
+                  href={`/api/renders/${job.id}/video`}
+                  title={quality?.ok ? 'Automated quality checks passed' : 'Not quality checked'}
+                >
+                  Download {job.preset} ({job.width}×{job.height})
+                  {quality?.ok ? ' ✓' : ' —'}
+                </a>
+              );
+            })}
           </div>
         )}
+        {pipeline && !pipeline.readyToPublish && (
+          <p className="hint" style={{ margin: 0 }}>
+            A video is only marked ready to publish when its file passes every automated check and the
+            lesson review status is approved.
+          </p>
+        )}
       </div>
+
+      {pipeline && (
+        <div className="card tight">
+          <h3>Publication checklist</h3>
+          <ul className="check-list">
+            {pipeline.checklist.map((item) => (
+              <li key={item.key} className={item.ok === null ? '' : item.ok ? 'ok' : 'bad'}>
+                <span className="mark">{item.ok === null ? '○' : item.ok ? '✓' : '✕'}</span>
+                <span>
+                  <strong>
+                    {item.label}
+                    {item.kind === 'manual' ? ' — needs your review' : ''}
+                  </strong>
+                  <em>{item.detail}</em>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid two">
         {PLATFORMS.map((platform) => {
