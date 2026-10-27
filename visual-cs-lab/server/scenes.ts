@@ -93,6 +93,11 @@ export type ConceptRun = {
   steps: BinarySearchStep[];
   foundIndex: number | null;
   summary: string;
+  /** The input the trusted run was produced from (binary search only). */
+  input: number[];
+  target: number | null;
+  comparisons: number;
+  complexity: { time: string; space: string; arraySize: number; comparisons: number } | null;
   errors: string[];
   validation: Validation;
   eventCount: number;
@@ -126,6 +131,10 @@ export function runConcept(concept: ConceptInput): ConceptRun {
       steps: trace.steps,
       foundIndex: trace.foundIndex >= 0 ? trace.foundIndex : null,
       summary: trace.summary,
+      input: trace.array,
+      target: trace.target,
+      comparisons: trace.comparisons,
+      complexity: trace.complexity,
       errors: trace.errors,
       validation,
       eventCount: trace.steps.length
@@ -142,6 +151,10 @@ export function runConcept(concept: ConceptInput): ConceptRun {
       steps: [],
       foundIndex: null,
       summary: '',
+      input: [],
+      target: null,
+      comparisons: 0,
+      complexity: null,
       errors: [],
       validation: { ok: false, failures: [] },
       eventCount: 0
@@ -157,6 +170,10 @@ export function runConcept(concept: ConceptInput): ConceptRun {
     steps: [],
     foundIndex: null,
     summary: '',
+    input: [],
+    target: null,
+    comparisons: events.length,
+    complexity: null,
     errors,
     validation,
     eventCount: events.length
@@ -384,6 +401,18 @@ function formatSeconds(ms: number): string {
   return (Math.round(ms / 100) / 10).toFixed(1);
 }
 
+/** How far the persisted scene total may drift from the lesson duration. */
+export const TOTAL_TOLERANCE_MS = 100;
+
+/**
+ * A cheap fingerprint of a verified trace: the decision each comparison made and
+ * the bounds it produced. Two storyboards with the same fingerprint animate the
+ * same run, so a stale storyboard cannot pass readiness on step count alone.
+ */
+function traceSignature(steps: BinarySearchStep[]): string {
+  return steps.map((step) => `${step.low}:${step.high}:${step.mid}:${step.comparison}:${step.nextLow}:${step.nextHigh}`).join('|');
+}
+
 function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: ConceptRun, seconds: number): string[] {
   const issues: string[] = [];
   const stored = safeJson<Scene[]>(lesson.scenes || '[]', []);
@@ -428,9 +457,16 @@ function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: Conce
           issues.push(
             `${label} carries ${scene.visual.steps.length} trace steps but the trusted run has ${run.steps.length} — rebuild the storyboard.`
           );
+        } else if (traceSignature(scene.visual.steps) !== traceSignature(run.steps)) {
+          issues.push(`${label} animates different comparisons than the verified trace — rebuild the storyboard.`);
         }
         if (!Array.isArray(scene.visual.array) || scene.visual.array.length === 0) {
           issues.push(`${label} is missing the array it should animate.`);
+        } else if (scene.visual.array.join(',') !== run.input.join(',')) {
+          issues.push(`${label} animates a different array than the concept configuration — rebuild the storyboard.`);
+        }
+        if (scene.visual.target !== run.target) {
+          issues.push(`${label} animates target ${String(scene.visual.target)} but the concept searches for ${String(run.target)} — rebuild the storyboard.`);
         }
       } else if (scene.visual.kind === 'stack' && run.kind === 'stack') {
         if (!Array.isArray(scene.visual.items)) issues.push(`${label} is missing its stack snapshot.`);
@@ -440,7 +476,7 @@ function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: Conce
 
   const total = stored.reduce((sum, scene) => sum + (Number(scene.durationMs) || 0), 0);
   const target = Math.round(seconds * 1000);
-  if (total > 0 && Math.abs(total - target) > 50) {
+  if (total > 0 && Math.abs(total - target) > TOTAL_TOLERANCE_MS) {
     issues.push(
       `The scene timings add up to ${formatSeconds(total)}s but the lesson duration is ${formatSeconds(target)}s — adjust the scene timings.`
     );
@@ -480,7 +516,10 @@ export function lessonIssues(lesson: LessonInput, concept: ConceptInput): string
   }
 
   issues.push(...run.errors);
-  issues.push(...run.validation.failures);
+  if (run.validation.failures.length > 0) issues.push(...run.validation.failures);
+  else if (!run.validation.ok) {
+    issues.push('The trace could not be verified against the trusted implementation, so the lesson cannot render.');
+  }
   if (!hasExpectation(config)) {
     issues.push(
       `The ${run.kind === 'binary-search' ? 'binary search' : 'stack'} animation configuration has no expected result to verify against.`

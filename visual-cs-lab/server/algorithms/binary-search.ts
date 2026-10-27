@@ -45,13 +45,34 @@ export type BinarySearchConfig = {
   expect?: BinarySearchExpectation;
 };
 
+export type BinarySearchComplexity = {
+  time: string;
+  space: string;
+  /** Length of the searched array. */
+  arraySize: number;
+  /** Comparisons the trusted run actually performed. */
+  comparisons: number;
+};
+
 export type BinarySearchTrace = {
+  /** The input the trace was produced from. */
+  array: number[];
+  target: number;
+  /** One step per comparison, including the bound update it caused. */
   steps: BinarySearchStep[];
   foundIndex: number;
   comparisons: number;
   summary: string;
+  complexity: BinarySearchComplexity;
   errors: string[];
 };
+
+const TIME_COMPLEXITY = 'O(log n)';
+const SPACE_COMPLEXITY = 'O(1)';
+
+function complexityOf(arraySize: number, comparisons: number): BinarySearchComplexity {
+  return { time: TIME_COMPLEXITY, space: SPACE_COMPLEXITY, arraySize, comparisons };
+}
 
 export type Validation = { ok: boolean; failures: string[] };
 
@@ -100,15 +121,27 @@ function inputErrors(array: unknown, target: unknown): string[] {
 export function traceBinarySearch(array: number[], target: number): BinarySearchTrace {
   const errors = inputErrors(array, target);
   if (errors.length > 0) {
-    return { steps: [], foundIndex: -1, comparisons: 0, summary: 'No trace could be produced.', errors };
+    return {
+      array: Array.isArray(array) ? array : [],
+      target: Number(target),
+      steps: [],
+      foundIndex: -1,
+      comparisons: 0,
+      summary: 'No trace could be produced.',
+      complexity: complexityOf(0, 0),
+      errors
+    };
   }
 
   if (!isSortedAscending(array)) {
     return {
+      array,
+      target,
       steps: [],
       foundIndex: -1,
       comparisons: 0,
       summary: 'The input is not sorted.',
+      complexity: complexityOf(array.length, 0),
       errors: [
         'Binary search requires a sorted array (ascending order). This configuration is not sorted, so no trace can be verified.'
       ]
@@ -122,10 +155,13 @@ export function traceBinarySearch(array: number[], target: number): BinarySearch
 
   if (array.length === 0) {
     return {
+      array,
+      target,
       steps,
       foundIndex,
       comparisons: 0,
       summary: 'The array is empty, so nothing can be found.',
+      complexity: complexityOf(0, 0),
       errors: []
     };
   }
@@ -196,7 +232,16 @@ export function traceBinarySearch(array: number[], target: number): BinarySearch
       ? `${target} found at index ${foundIndex} after ${steps.length} comparison${steps.length === 1 ? '' : 's'}.`
       : `${target} is not in the array: the range collapsed after ${steps.length} comparison${steps.length === 1 ? '' : 's'}.`;
 
-  return { steps, foundIndex, comparisons: steps.length, summary, errors: [] };
+  return {
+    array,
+    target,
+    steps,
+    foundIndex,
+    comparisons: steps.length,
+    summary,
+    complexity: complexityOf(array.length, steps.length),
+    errors: []
+  };
 }
 
 /**

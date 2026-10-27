@@ -190,16 +190,18 @@ const BINARY_SEARCH_ANIMATION = {
 
 /** The lesson this configuration is demonstrated with. */
 const BINARY_SEARCH_LESSON = {
-  title: 'Binary Search in 20 seconds',
-  audience: 'Junior developers revising for interviews',
-  objective: 'Trace low, high and mid over a sorted array and explain why every comparison halves the range.',
+  title: 'Binary Search in 20 Seconds',
+  audience: 'Beginner software engineering students',
+  objective:
+    'Understand how iterative binary search halves a sorted search interval and updates its bounds.',
   hook: 'Searching a sorted array? Check the middle first.',
   narration:
-    'Sorted array: 1, 3, 5, 7, 9. Target 7. Start with the whole range. The middle is 5, and 5 is smaller than 7, so the left half is gone. The new middle is 7 — found at index 3. Two comparisons instead of five.',
-  on_screen_text: 'mid = floor((low + high) / 2)',
-  key_takeaway: 'Each comparison halves the range: O(log n) time, O(1) extra space.',
-  cta: 'Try a target that is not in the array — where does the range collapse?',
-  sources: 'CLRS ch. 2.3 (binary search). Precondition: the input array must be sorted.'
+    'Binary search works on sorted arrays. Check the middle element. If it is too small, discard the left portion. If it is too large, discard the right portion. Repeat until the target is found or the range is empty. Each comparison halves the remaining range.',
+  on_screen_text: 'Sorted array. Check the middle. Eliminate half. Repeat.',
+  key_takeaway: 'Binary search requires sorted input and runs in O(log n) time.',
+  cta: "Understand the algorithm. Don't just memorize it.",
+  sources:
+    'Cormen, Leiserson, Rivest & Stein, Introduction to Algorithms (3rd ed.), Problem 2.3-5; Sedgewick & Wayne, Algorithms (4th ed.), §1.1 BinarySearch. Sorted input is a precondition.'
 };
 
 const SEED: SeedConcept[] = [

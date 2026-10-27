@@ -234,6 +234,10 @@ app.post('/api/concepts/:id/trace', (req, res) => {
     steps: run.steps,
     foundIndex: run.foundIndex,
     summary: run.summary,
+    input: run.input,
+    target: run.target,
+    comparisons: run.comparisons,
+    complexity: run.complexity,
     errors: run.errors,
     validation: run.validation,
     expectation
@@ -324,7 +328,8 @@ app.post('/api/lessons/:id/storyboard', (req, res) => {
     nowIso(),
     req.params.id
   );
-  const issues = lessonIssues(bundle.lesson, bundle.concept);
+  // Validate the row we just wrote, not the stale copy loaded before the update.
+  const issues = lessonIssues({ ...bundle.lesson, scenes: JSON.stringify(scenes) }, bundle.concept);
   res.json({
     scenes,
     durationMs: scenes.reduce((sum, scene) => sum + scene.durationMs, 0),

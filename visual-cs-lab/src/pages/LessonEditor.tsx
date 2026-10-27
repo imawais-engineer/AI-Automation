@@ -14,9 +14,9 @@ type Detail = {
 
 const DURATIONS = [10, 20, 30, 45, 60];
 const PRESETS: { key: 'preview' | 'hd' | '4k'; label: string; note: string }[] = [
-  { key: 'preview', label: 'Preview', note: '540×960 · fast' },
-  { key: 'hd', label: 'HD', note: '1080×1920 · 30fps' },
-  { key: '4k', label: '4K', note: '2160×3840 · 30fps' }
+  { key: 'preview', label: 'Preview', note: '540×960 · renders locally · use this while iterating' },
+  { key: 'hd', label: 'HD', note: '1080×1920 · renders locally · publish-ready' },
+  { key: '4k', label: '4K', note: '2160×3840 · renders locally · slow, run it after HD looks right' }
 ];
 
 const ACTIVE = ['queued', 'rendering', 'encoding', 'validating'];

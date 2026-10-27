@@ -5,7 +5,7 @@ import { createCanvas } from '@napi-rs/canvas';
 import ffmpegPath from 'ffmpeg-static';
 
 import { db, newId, nowIso, readBrand, type Brand } from '../db.ts';
-import { buildScenes, lessonIssues, safeJson, type ConceptInput, type LessonInput, type Scene } from '../scenes.ts';
+import { lessonIssues, safeJson, type ConceptInput, type LessonInput, type Scene } from '../scenes.ts';
 import { drawFrame, totalDuration } from './draw.ts';
 
 export type Preset = 'preview' | 'hd' | '4k';
@@ -321,11 +321,17 @@ export function thumbnail(lessonId: string, sceneIndex: number, width = 540): Bu
   return canvas.encodeSync('png');
 }
 
+/**
+ * The canonical storyboard: only the scenes persisted on the lesson row.
+ *
+ * It deliberately does not fall back to a freshly built scene list — that would
+ * show a storyboard the render readiness check and the renderer cannot see, and
+ * let the UI promise a video the stored record cannot produce.
+ */
 export function scenesFor(lessonId: string): Scene[] | null {
   const bundle = lessonBundle(lessonId);
   if (!bundle) return null;
-  const stored = safeJson<Scene[]>(bundle.lesson.scenes || '[]', []);
-  return stored.length > 0 ? stored : buildScenes(bundle.lesson, bundle.concept);
+  return safeJson<Scene[]>(bundle.lesson.scenes || '[]', []);
 }
 
 export function resumeOnBoot(): void {

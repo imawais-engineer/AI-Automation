@@ -119,6 +119,17 @@ test('validation reports a missing storyboard, hook and takeaway', () => {
   assert.ok(issues.some((issue) => /key takeaway/i.test(issue)));
 });
 
+test('a storyboard whose trace steps were altered fails readiness', () => {
+  const scenes = buildScenes(BINARY_LESSON, BINARY_CONCEPT);
+  const tampered = scenes.map((scene, index) => {
+    if (index !== 2 || scene.visual?.kind !== 'binary-search') return scene;
+    const steps = scene.visual.steps.map((step, i) => (i === 1 ? { ...step, mid: 4 } : step));
+    return { ...scene, visual: { ...scene.visual, steps } };
+  });
+  const issues = lessonIssues(withScenes(BINARY_LESSON, tampered), BINARY_CONCEPT);
+  assert.ok(issues.some((issue) => /different comparisons/i.test(issue)));
+});
+
 test('editing the lesson hook makes the stored storyboard stale', () => {
   const stale = { ...BINARY_LESSON, hook: 'A different hook.' };
   const issues = lessonIssues(withScenes(stale, buildScenes(BINARY_LESSON, BINARY_CONCEPT)), BINARY_CONCEPT);

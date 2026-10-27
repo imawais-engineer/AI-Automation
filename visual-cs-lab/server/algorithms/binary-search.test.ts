@@ -85,6 +85,34 @@ test('target missing from inside the range returns -1', () => {
   assert.equal(validateBinarySearchTrace(run, { foundIndex: -1 }, EXAMPLE, 6).ok, true);
 });
 
+test('target at the first and last positions is found', () => {
+  const first = traceBinarySearch(EXAMPLE, 1);
+  assert.equal(first.foundIndex, 0);
+  assert.equal(EXAMPLE[first.foundIndex], 1);
+  assert.equal(validateBinarySearchTrace(first, { foundIndex: 0 }, EXAMPLE, 1).ok, true);
+
+  const last = traceBinarySearch(EXAMPLE, 9);
+  assert.equal(last.foundIndex, 4);
+  assert.equal(last.steps[last.steps.length - 1].comparison, 'equal');
+  assert.equal(validateBinarySearchTrace(last, { foundIndex: 4 }, EXAMPLE, 9).ok, true);
+});
+
+test('the trace carries its input, target, comparisons and complexity metadata', () => {
+  const run = traceBinarySearch(EXAMPLE, 7);
+  assert.deepEqual(run.array, EXAMPLE);
+  assert.equal(run.target, 7);
+  assert.equal(run.comparisons, 2);
+  assert.deepEqual(run.complexity, { time: 'O(log n)', space: 'O(1)', arraySize: 5, comparisons: 2 });
+  // Every comparison records the bounds it produced.
+  assert.deepEqual(
+    run.steps.map((step) => [step.nextLow, step.nextHigh]),
+    [
+      [3, 4],
+      [3, 3]
+    ]
+  );
+});
+
 test('single-element array: found and not found', () => {
   const found = traceBinarySearch([4], 4);
   assert.equal(found.foundIndex, 0);
