@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
-import { api, type Concept } from '../api';
+import { api, type BinarySearchStep, type Concept } from '../api';
 import StackVisualizer from '../components/StackVisualizer';
 
 type Detail = {
   concept: Concept;
   lessons: { id: string; title: string; review_status: string; duration_seconds: number }[];
-  animation: { supported: boolean; validation: { ok: boolean; failures: string[] }; eventCount: number };
+  animation: {
+    supported: boolean;
+    kind: 'stack' | 'binary-search' | 'none';
+    validation: { ok: boolean; failures: string[] };
+    eventCount: number;
+  };
+  trace: { steps: BinarySearchStep[]; foundIndex: number | null; summary: string; errors: string[] };
 };
 
 const EDITABLE: { key: string; label: string; rows: number; mono?: boolean }[] = [
@@ -106,7 +112,9 @@ export default function ConceptDetail() {
             <span className={`badge ${detail.animation.supported ? (detail.animation.validation.ok ? 'good' : 'warn') : ''}`}>
               {detail.animation.supported
                 ? detail.animation.validation.ok
-                  ? `${detail.animation.eventCount} verified events`
+                  ? `${detail.animation.eventCount} verified ${
+                      detail.animation.kind === 'binary-search' ? 'steps' : 'events'
+                    }`
                   : 'trace not verified'
                 : 'no animation config'}
             </span>
@@ -131,6 +139,50 @@ export default function ConceptDetail() {
             <span className="badge accent">event-driven</span>
           </div>
           <StackVisualizer conceptId={detail.concept.id} initialOps={initialOps} />
+        </section>
+      )}
+
+      {detail.animation.kind === 'binary-search' && detail.trace.steps.length > 0 && (
+        <section className="card">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <h2>Verified trace</h2>
+            <span className={`badge ${detail.animation.validation.ok ? 'good' : 'bad'}`}>
+              {detail.animation.validation.ok
+                ? detail.trace.foundIndex === null
+                  ? 'not in array'
+                  : `found at index ${detail.trace.foundIndex}`
+                : 'not verified'}
+            </span>
+          </div>
+          <p className="hint">
+            Trusted implementation: inclusive low/high, mid = floor((low + high) / 2). Requires a sorted
+            input.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>low</th>
+                <th>high</th>
+                <th>mid</th>
+                <th>a[mid]</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.trace.steps.map((step) => (
+                <tr key={step.n}>
+                  <td className="mono">{step.n}</td>
+                  <td className="mono">{step.low}</td>
+                  <td className="mono">{step.high}</td>
+                  <td className="mono">{step.mid}</td>
+                  <td className="mono">{step.midValue}</td>
+                  <td>{step.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="hint">{detail.trace.summary}</p>
         </section>
       )}
 

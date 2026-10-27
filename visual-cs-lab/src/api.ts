@@ -21,6 +21,41 @@ export type Concept = {
   updated_at: string;
 };
 
+export type StackVisual = {
+  kind: 'stack';
+  items: number[];
+  top: number | null;
+  op: string | null;
+  value: number | null;
+  returned: number | null;
+  step: number;
+  total: number;
+};
+
+export type BinarySearchStep = {
+  n: number;
+  low: number;
+  high: number;
+  mid: number;
+  midValue: number;
+  target: number;
+  comparison: 'less' | 'greater' | 'equal';
+  nextLow: number;
+  nextHigh: number;
+  eliminated: number[];
+  foundIndex: number | null;
+  message: string;
+};
+
+export type BinarySearchVisual = {
+  kind: 'binary-search';
+  array: number[];
+  target: number;
+  foundIndex: number | null;
+  mode: 'setup' | 'trace';
+  steps: BinarySearchStep[];
+};
+
 export type Scene = {
   id: string;
   type: string;
@@ -29,16 +64,7 @@ export type Scene = {
   subtitle: string;
   caption: string;
   code?: { language: string; lines: string[]; highlight: number };
-  visual?: {
-    kind: 'stack';
-    items: number[];
-    top: number | null;
-    op: string | null;
-    value: number | null;
-    returned: number | null;
-    step: number;
-    total: number;
-  };
+  visual?: StackVisual | BinarySearchVisual;
 };
 
 export type Lesson = {

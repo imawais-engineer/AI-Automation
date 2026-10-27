@@ -155,7 +155,15 @@ async function renderJob(job: RenderJob): Promise<void> {
   }
 
   const brand = readBrand();
-  const scenes = buildScenes(bundle.lesson, bundle.concept);
+  // Render the stored storyboard so edited timings and captions reach the file.
+  const scenes = scenesFor(job.lesson_id) || [];
+  if (scenes.length === 0) {
+    setState(job.id, 'error', {
+      error: 'The lesson has no storyboard to render. Build the storyboard first.',
+      finished_at: nowIso()
+    });
+    return;
+  }
   const expectedMs = totalDuration(scenes);
   const totalFrames = Math.max(1, Math.round((expectedMs / 1000) * job.fps));
   appendLog(job.id, `${scenes.length} scenes, ${totalFrames} frames at ${job.width}×${job.height} ${job.fps}fps`);
@@ -299,9 +307,8 @@ async function renderJob(job: RenderJob): Promise<void> {
 
 /** A single rendered frame, used for real storyboard thumbnails. */
 export function thumbnail(lessonId: string, sceneIndex: number, width = 540): Buffer | null {
-  const bundle = lessonBundle(lessonId);
-  if (!bundle) return null;
-  const scenes = buildScenes(bundle.lesson, bundle.concept);
+  const scenes = scenesFor(lessonId);
+  if (!scenes) return null;
   const scene = scenes[sceneIndex];
   if (!scene) return null;
   const height = Math.round((width / 9) * 16);

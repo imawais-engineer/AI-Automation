@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 
+import { buildScenes, type ConceptInput, type LessonInput } from './scenes.ts';
+
 const DATA_DIR = process.env.DATA_DIR || '/tmp/visual-cs-lab';
 mkdirSync(DATA_DIR, { recursive: true });
 
@@ -173,6 +175,32 @@ const STACK_OPS = [
   { op: 'push', value: 30 },
   { op: 'pop' }
 ];
+
+/**
+ * Trusted animation configuration for Binary Search. Inclusive bounds, mid
+ * calculated as floor((low + high) / 2); `expect` is what the trace is verified
+ * against before any lesson can render.
+ */
+const BINARY_SEARCH_ANIMATION = {
+  kind: 'binary-search',
+  array: [1, 3, 5, 7, 9],
+  target: 7,
+  expect: { foundIndex: 3, steps: 2 }
+};
+
+/** The lesson this configuration is demonstrated with. */
+const BINARY_SEARCH_LESSON = {
+  title: 'Binary Search in 20 seconds',
+  audience: 'Junior developers revising for interviews',
+  objective: 'Trace low, high and mid over a sorted array and explain why every comparison halves the range.',
+  hook: 'Searching a sorted array? Check the middle first.',
+  narration:
+    'Sorted array: 1, 3, 5, 7, 9. Target 7. Start with the whole range. The middle is 5, and 5 is smaller than 7, so the left half is gone. The new middle is 7 — found at index 3. Two comparisons instead of five.',
+  on_screen_text: 'mid = floor((low + high) / 2)',
+  key_takeaway: 'Each comparison halves the range: O(log n) time, O(1) extra space.',
+  cta: 'Try a target that is not in the array — where does the range collapse?',
+  sources: 'CLRS ch. 2.3 (binary search). Precondition: the input array must be sorted.'
+};
 
 const SEED: SeedConcept[] = [
   {
@@ -373,6 +401,7 @@ const SEED: SeedConcept[] = [
     space: 'O(1)',
     exampleInput: '[1, 3, 5, 7, 9], target 7',
     expectedOutput: 'Index 3',
+    animation: BINARY_SEARCH_ANIMATION,
     related: ['linear-search', 'binary-search-trees']
   },
   {
@@ -644,6 +673,95 @@ if (count.n === 0) {
     now
   );
 }
+
+/**
+ * Keeps the Binary Search demo usable on databases created before it had an
+ * animation configuration: attaches the trusted config and completes the
+ * lesson's copy without overwriting anything a person has edited.
+ */
+function ensureBinarySearchDemo(): void {
+  const concept = db
+    .prepare("SELECT id, animation_config FROM concepts WHERE slug = 'binary-search'")
+    .get() as { id: string; animation_config: string } | undefined;
+  if (!concept) return;
+
+  const config = safeParse(concept.animation_config);
+  const configured = Boolean(config) && config!.kind === 'binary-search' && Array.isArray(config!.array);
+  if (!configured) {
+    db.prepare('UPDATE concepts SET animation_config = ?, updated_at = ? WHERE id = ?').run(
+      JSON.stringify(BINARY_SEARCH_ANIMATION),
+      nowIso(),
+      concept.id
+    );
+  }
+
+  const existing = db
+    .prepare('SELECT * FROM lessons WHERE concept_id = ? ORDER BY created_at LIMIT 1')
+    .get(concept.id) as Record<string, unknown> | undefined;
+
+  if (!existing) {
+    db.prepare(
+      `INSERT INTO lessons (id, concept_id, title, audience, objective, duration_seconds, hook,
+         narration, on_screen_text, key_takeaway, cta, sources, review_status, scenes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 20, ?, ?, ?, ?, ?, ?, 'draft', '[]', ?, ?)`
+    ).run(
+      newId(),
+      concept.id,
+      BINARY_SEARCH_LESSON.title,
+      BINARY_SEARCH_LESSON.audience,
+      BINARY_SEARCH_LESSON.objective,
+      BINARY_SEARCH_LESSON.hook,
+      BINARY_SEARCH_LESSON.narration,
+      BINARY_SEARCH_LESSON.on_screen_text,
+      BINARY_SEARCH_LESSON.key_takeaway,
+      BINARY_SEARCH_LESSON.cta,
+      BINARY_SEARCH_LESSON.sources,
+      nowIso(),
+      nowIso()
+    );
+  } else {
+    const fills = (Object.entries(BINARY_SEARCH_LESSON) as [string, string][]).filter(
+      ([key]) => !String(existing[key] ?? '').trim()
+    );
+    if (fills.length > 0) {
+      db.prepare(
+        `UPDATE lessons SET ${fills.map(([key]) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`
+      ).run(
+        ...fills.map(([, value]) => value as never),
+        nowIso(),
+        String(existing.id)
+      );
+    }
+  }
+
+  // Build the storyboard once, so the demo lesson opens renderable. Later edits
+  // (timing, captions, hook) still have to be rebuilt by hand.
+  const lesson = db
+    .prepare('SELECT * FROM lessons WHERE concept_id = ? ORDER BY created_at LIMIT 1')
+    .get(concept.id) as (LessonInput & { scenes: string }) | undefined;
+  const conceptRow = db.prepare('SELECT * FROM concepts WHERE id = ?').get(concept.id) as ConceptInput | undefined;
+  const stored = lesson ? safeParse(lesson.scenes) : null;
+  const hasStoryboard = Array.isArray(stored) && stored.length > 0;
+  if (lesson && conceptRow && !hasStoryboard) {
+    const scenes = buildScenes(lesson, conceptRow);
+    db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
+      JSON.stringify(scenes),
+      nowIso(),
+      lesson.id
+    );
+  }
+}
+
+function safeParse(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw || '');
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+ensureBinarySearchDemo();
 
 export type Brand = {
   name: string;

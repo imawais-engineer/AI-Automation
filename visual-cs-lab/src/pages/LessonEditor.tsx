@@ -21,6 +21,16 @@ const PRESETS: { key: 'preview' | 'hd' | '4k'; label: string; note: string }[] =
 
 const ACTIVE = ['queued', 'rendering', 'encoding', 'validating'];
 
+type SceneDraft = { duration: string; caption: string };
+
+function sceneDraftMap(scenes: Scene[]): Record<string, SceneDraft> {
+  const map: Record<string, SceneDraft> = {};
+  for (const scene of scenes) {
+    map[scene.id] = { duration: (scene.durationMs / 1000).toFixed(2), caption: scene.caption || '' };
+  }
+  return map;
+}
+
 const FIELDS = [
   { key: 'hook', label: 'Hook', rows: 2, hint: 'First line on screen — no intro, start with the idea.' },
   { key: 'narration', label: 'Narration', rows: 4, hint: 'Spoken script. Captions are generated from the scene data.' },
@@ -43,12 +53,14 @@ export default function LessonEditor() {
   const [busy, setBusy] = useState(false);
   const [stamp, setStamp] = useState(Date.now());
   const [brand, setBrand] = useState<Brand | null>(null);
+  const [sceneDrafts, setSceneDrafts] = useState<Record<string, SceneDraft>>({});
 
   const load = useCallback(async () => {
     try {
       const data = await api<Detail>(`/api/lessons/${id}`);
       setDetail(data);
       setScenes(data.scenes);
+      setSceneDrafts(sceneDraftMap(data.scenes));
       setRenders(data.renders);
       setIssues(data.issues);
       setDraft({
@@ -114,6 +126,7 @@ export default function LessonEditor() {
         { method: 'POST' }
       );
       setScenes(data.scenes);
+      setSceneDrafts(sceneDraftMap(data.scenes));
       setIssues(data.issues);
       setStamp(Date.now());
       setNotice(
@@ -121,6 +134,36 @@ export default function LessonEditor() {
           ? `Storyboard built: ${data.scenes.length} scenes from the verified trace.`
           : 'Storyboard built, but the lesson still has blocking issues.'
       );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveSceneEdits() {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const payload = scenes.map((scene) => {
+        const edited = sceneDrafts[scene.id];
+        const seconds = Number(edited?.duration ?? scene.durationMs / 1000);
+        return {
+          id: scene.id,
+          durationMs: Number.isFinite(seconds) ? Math.round(seconds * 1000) : scene.durationMs,
+          caption: edited?.caption ?? scene.caption
+        };
+      });
+      const data = await api<{ scenes: Scene[]; issues: string[] }>(`/api/lessons/${id}/scenes`, {
+        method: 'PATCH',
+        body: JSON.stringify({ scenes: payload })
+      });
+      setScenes(data.scenes);
+      setSceneDrafts(sceneDraftMap(data.scenes));
+      setIssues(data.issues);
+      setStamp(Date.now());
+      setNotice('Scene timings and narration saved.');
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -153,6 +196,16 @@ export default function LessonEditor() {
   }
 
   const totalMs = useMemo(() => scenes.reduce((sum, scene) => sum + scene.durationMs, 0), [scenes]);
+
+  const draftTotalMs = useMemo(
+    () =>
+      scenes.reduce((sum, scene) => {
+        const edited = sceneDrafts[scene.id];
+        const seconds = Number(edited?.duration ?? scene.durationMs / 1000);
+        return sum + (Number.isFinite(seconds) ? seconds * 1000 : 0);
+      }, 0),
+    [scenes, sceneDrafts]
+  );
 
   if (error && !detail) return <div className="notice bad">{error}</div>;
   if (!detail) return <div className="notice">Loading lesson…</div>;
@@ -401,6 +454,86 @@ export default function LessonEditor() {
           </div>
         )}
       </section>
+
+      {scenes.length > 0 && (
+        <section className="card">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <h2>Scene timing &amp; narration</h2>
+            <span
+              className={`badge ${
+                Math.abs(draftTotalMs - Number(draft.duration_seconds) * 1000) > 50 ? 'warn' : 'good'
+              }`}
+            >
+              {(draftTotalMs / 1000).toFixed(2)}s / {Number(draft.duration_seconds || 0).toFixed(0)}s
+            </span>
+          </div>
+          <p className="hint">
+            Durations and captions are stored with the storyboard and used by the renderer, so the total has
+            to match the lesson duration.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 150 }}>Scene</th>
+                <th style={{ width: 130 }}>Duration (s)</th>
+                <th>Narration / caption</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scenes.map((scene, index) => (
+                <tr key={scene.id}>
+                  <td>
+                    <span className="mono" style={{ fontSize: 12 }}>
+                      {index + 1} · {scene.type}
+                    </span>
+                  </td>
+                  <td>
+                    <input
+                      className="input"
+                      inputMode="decimal"
+                      aria-label={`Scene ${index + 1} duration in seconds`}
+                      value={sceneDrafts[scene.id]?.duration ?? (scene.durationMs / 1000).toFixed(2)}
+                      onChange={(event) =>
+                        setSceneDrafts({
+                          ...sceneDrafts,
+                          [scene.id]: {
+                            duration: event.target.value,
+                            caption: sceneDrafts[scene.id]?.caption ?? scene.caption
+                          }
+                        })
+                      }
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className="input"
+                      aria-label={`Scene ${index + 1} caption`}
+                      value={sceneDrafts[scene.id]?.caption ?? scene.caption}
+                      onChange={(event) =>
+                        setSceneDrafts({
+                          ...sceneDrafts,
+                          [scene.id]: {
+                            duration: sceneDrafts[scene.id]?.duration ?? (scene.durationMs / 1000).toFixed(2),
+                            caption: event.target.value
+                          }
+                        })
+                      }
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="row">
+            <button className="btn primary" onClick={saveSceneEdits} disabled={busy}>
+              Save scene edits
+            </button>
+            <button className="btn" onClick={() => setSceneDrafts(sceneDraftMap(scenes))} disabled={busy}>
+              Reset
+            </button>
+          </div>
+        </section>
+      )}
     </>
   );
 }

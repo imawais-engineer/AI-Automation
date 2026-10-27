@@ -160,9 +160,11 @@ app.get('/api/concepts/:id', (req, res) => {
     lessons,
     animation: {
       supported: run.supported,
+      kind: run.kind,
       validation: run.validation,
-      eventCount: run.events.length
-    }
+      eventCount: run.eventCount
+    },
+    trace: { steps: run.steps, foundIndex: run.foundIndex, summary: run.summary, errors: run.errors }
   });
 });
 
@@ -213,12 +215,29 @@ app.post('/api/concepts/:id/archive', (req, res) => {
 app.post('/api/concepts/:id/trace', (req, res) => {
   const concept = requireConcept(req.params.id);
   if (!concept) return res.status(404).json({ error: 'Concept not found.' });
-  const config = safeJson<{ ops?: unknown; expect?: Record<string, unknown> }>(concept.animation_config, {});
-  const ops = req.body?.ops ? parseOps(req.body.ops) : parseOps(config.ops || []);
-  const { events, errors } = trace(ops);
-  const expectation = (config.expect || {}) as Parameters<typeof validate>[1];
-  const validation = validate(events, expectation);
-  res.json({ events, errors, validation, expectation });
+
+  // Stack visualizer: an explicit op list from the client overrides the config.
+  if (req.body?.ops) {
+    const ops = parseOps(req.body.ops);
+    const { events, errors } = trace(ops);
+    const config = safeJson<{ expect?: Record<string, unknown> }>(concept.animation_config, {});
+    const expectation = (config.expect || {}) as Parameters<typeof validate>[1];
+    res.json({ kind: 'stack', events, errors, validation: validate(events, expectation), expectation });
+    return;
+  }
+
+  const run = runConcept(concept);
+  const expectation = safeJson<{ expect?: Record<string, unknown> }>(concept.animation_config, {}).expect || {};
+  res.json({
+    kind: run.kind,
+    events: run.events,
+    steps: run.steps,
+    foundIndex: run.foundIndex,
+    summary: run.summary,
+    errors: run.errors,
+    validation: run.validation,
+    expectation
+  });
 });
 
 /* ------------------------------------------------------------------- lessons */
@@ -318,6 +337,51 @@ app.get('/api/lessons/:id/scenes', (req, res) => {
   const scenes = scenesFor(req.params.id);
   if (!scenes) return res.status(404).json({ error: 'Lesson not found.' });
   res.json({ scenes });
+});
+
+/** Edits scene timings and captions; the renderer reads the stored storyboard. */
+app.patch('/api/lessons/:id/scenes', (req, res) => {
+  const lesson = requireLesson(req.params.id);
+  if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
+  const concept = requireConcept(lesson.concept_id);
+  if (!concept) return res.status(404).json({ error: 'Concept not found.' });
+
+  const current = safeJson<Scene[]>(lesson.scenes, []);
+  if (current.length === 0) {
+    return res.status(400).json({ error: 'Generate the storyboard before editing scene timings.' });
+  }
+  const incoming = req.body?.scenes;
+  if (!Array.isArray(incoming)) return res.status(400).json({ error: 'Send the edited scenes as an array.' });
+
+  const patches = new Map<string, Record<string, unknown>>();
+  for (const raw of incoming) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.id === 'string' && item.id) patches.set(item.id, item);
+  }
+
+  const next = current.map((scene) => {
+    const patch = patches.get(scene.id);
+    if (!patch) return scene;
+    const duration = Number(patch.durationMs);
+    return {
+      ...scene,
+      durationMs: Number.isFinite(duration)
+        ? Math.max(300, Math.min(30000, Math.round(duration)))
+        : scene.durationMs,
+      caption: typeof patch.caption === 'string' ? patch.caption.slice(0, 400) : scene.caption,
+      subtitle: typeof patch.subtitle === 'string' ? patch.subtitle.slice(0, 400) : scene.subtitle
+    };
+  });
+  const unknownIds = Array.from(patches.keys()).filter((id) => !current.some((scene) => scene.id === id)).length;
+
+  db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
+    JSON.stringify(next),
+    nowIso(),
+    lesson.id
+  );
+  const updated = { ...lesson, scenes: JSON.stringify(next) };
+  res.json({ scenes: next, issues: lessonIssues(updated, concept), unknownIds });
 });
 
 app.get('/api/lessons/:id/scene/:index.png', (req, res) => {
