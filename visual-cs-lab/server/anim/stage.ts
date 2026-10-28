@@ -5,13 +5,20 @@
  * The whole video is drawn in a 1080 × 1920 design space and scaled to whatever
  * the output profile asks for, so a 540 × 960 preview is the same composition as
  * the 1080 × 1920 export.
+ *
+ * Three typographic roles carry the hierarchy — Space Grotesk for headlines, Inter
+ * for explanation, JetBrains Mono for code, indices and state — and every overlay
+ * owns a band of the frame, so copy can never drift into the animation area.
  */
 
 import type { SKRSContext2D } from '@napi-rs/canvas';
 
-import { clamp01, easeInCubic, easeOutCubic, lerp, track } from './easing.ts';
-import { mix, rgba, roundRect, wrap } from '../render/paint.ts';
-import { MONO, SANS } from '../render/typography.ts';
+import { clamp01, easeOutCubic, lerp, track } from './easing.ts';
+import { recordObject, recordPointer, recordText, type Rect } from './audit.ts';
+import { type Side, anchorEdgePoint, chipEdgePoint, overlapArea, placeChip } from './anchors.ts';
+import { drawText, ellipsize, fitText, textWidth } from '../render/layout.ts';
+import { mix, rgba, roundRect } from '../render/paint.ts';
+import { fontString, type FontRole } from '../render/typography.ts';
 
 export type Dims = { width: number; height: number };
 export type Camera = { x: number; y: number; zoom: number };
@@ -50,10 +57,42 @@ export const DESIGN_W = 1080;
 export const DESIGN_H = 1920;
 export const SAFE = 64;
 
-export function font(size: number, weight = 400, mono = false): string {
-  return `${weight} ${Math.round(size)}px ${mono ? MONO : SANS}`;
+/**
+ * The frame's overlay grid, in design pixels. Each overlay is only allowed inside
+ * its own band, which is what keeps a banner, a result card, a pointer label and
+ * the caption strip from ever landing on top of each other.
+ */
+export const BAND = {
+  headerTop: 46,
+  headerRule: 104,
+  kicker: 150,
+  operationTop: 196,
+  operationBottom: 306,
+  hookTop: 214,
+  hookBottom: 760,
+  resultTop: 336,
+  resultBottom: 508,
+  captionGap: 194,
+  footer: 78
+};
+
+/** Content box of the frame for a given width factor. */
+export function safeBox(k: number, top = 0, bottom = DESIGN_H): Rect {
+  return { x: SAFE * k, y: Math.max(0, top) * k, w: (DESIGN_W - SAFE * 2) * k, h: (bottom - top) * k };
 }
 
+export function font(size: number, weight = 400, mono = false): string {
+  return fontString(mono ? 'mono' : 'text', weight, size);
+}
+
+export function displayFont(size: number, weight = 700): string {
+  return fontString('display', weight, size);
+}
+
+/**
+ * One fitted line of text at a baseline. Long strings are cut with an ellipsis
+ * instead of running past `maxWidth`, so a watermark can never reach the frame edge.
+ */
 export function text(
   ctx: SKRSContext2D,
   value: string,
@@ -64,20 +103,25 @@ export function text(
     color: string;
     weight?: number;
     mono?: boolean;
+    display?: boolean;
     align?: CanvasTextAlign;
     alpha?: number;
     maxWidth?: number;
   }
-): void {
+): number {
+  const role: FontRole = opts.display ? 'display' : opts.mono ? 'mono' : 'text';
+  const weight = opts.weight ?? 600;
+  const maxWidth = opts.maxWidth ?? DESIGN_W * 2;
+  const cut = ellipsize(ctx, value, maxWidth, role, weight, opts.size);
   ctx.save();
   ctx.globalAlpha = opts.alpha ?? 1;
-  ctx.font = font(opts.size, opts.weight ?? 600, opts.mono);
+  ctx.font = fontString(role, weight, opts.size);
   ctx.fillStyle = opts.color;
   ctx.textAlign = opts.align ?? 'left';
   ctx.textBaseline = 'alphabetic';
-  const lines = opts.maxWidth ? wrap(ctx, value, opts.maxWidth, 4) : [value];
-  lines.forEach((line, index) => ctx.fillText(line, x, y + index * opts.size * 1.3));
+  ctx.fillText(cut.text, x, y);
   ctx.restore();
+  return cut.width;
 }
 
 /** Pushes the design-space camera. Pair with `popCamera`. */
@@ -228,6 +272,8 @@ export type BlockOptions = {
   scale?: number;
   glow?: number;
   valueSize?: number;
+  /** Audit group; the value text shares it so it is not reported as a collision. */
+  group?: string;
 };
 
 /**
@@ -241,17 +287,25 @@ export function drawBlock(ctx: SKRSContext2D, opts: BlockOptions): void {
   const alpha = clamp01(opts.alpha ?? 1);
   if (alpha <= 0) return;
 
+  const group = opts.group ?? 'block';
   const dx = Math.round(w * 0.05);
   const dy = Math.round(h * 0.16);
   const cx = opts.x + w / 2;
   const cy = opts.y + h / 2;
 
+  const scale = opts.scale ?? 1;
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  if (opts.scale && opts.scale !== 1) {
+  if (scale !== 1) {
     ctx.translate(cx, cy);
-    ctx.scale(opts.scale, opts.scale);
+    ctx.scale(scale, scale);
     ctx.translate(-cx, -cy);
+  }
+
+  // Shapes faded out are not on screen; recording them would invent collisions.
+  if (alpha >= 0.15) {
+    recordObject(ctx, group, { x: opts.x, y: opts.y - dy, w: w + dx, h: h + dy }, String(opts.value));
   }
 
   const glow = clamp01(opts.glow ?? 0);
@@ -343,79 +397,150 @@ export function drawBlock(ctx: SKRSContext2D, opts: BlockOptions): void {
     ctx.globalAlpha = alpha * 0.35;
   }
 
-  ctx.font = font(opts.valueSize ?? h * 0.52, 700);
-  ctx.fillStyle = tone === 'dim' ? rgba(pal.ink, 0.42) : tone === 'match' ? '#fff6f2' : pal.ink;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(String(opts.value), cx, cy + h * 0.02);
+  // The value is data, so it is set in the mono face and fitted to the face.
+  const inkColor = tone === 'dim' ? rgba(pal.ink, 0.42) : tone === 'match' ? '#fff6f2' : pal.ink;
+  drawText(ctx, String(opts.value), {
+    box: { x: opts.x + w * 0.14, y: opts.y + h * 0.2, w: w * 0.72, h: h * 0.62 },
+    role: 'mono',
+    weight: 600,
+    size: opts.valueSize ?? h * 0.5,
+    minSize: h * 0.2,
+    maxLines: 1,
+    align: 'center',
+    valign: 'middle',
+    color: inkColor,
+    group,
+    truncateOk: true
+  });
 
   ctx.restore();
 }
 
-/** The TOP pointer: a connector from the top block to a labelled tab. */
-export function drawTopPointer(
-  ctx: SKRSContext2D,
-  opts: {
-    x: number;
-    y: number;
-    label: string;
-    sub?: string;
-    pal: Palette;
-    alpha?: number;
-    side?: 'right' | 'left';
-    color?: string;
-  }
-): void {
-  const { pal } = opts;
+export type AnchorLabelOptions = {
+  /** The target object's rendered bounds — recomputed every frame. */
+  anchor: Rect;
+  anchorId: string;
+  group: string;
+  label: string;
+  sub?: string;
+  pal: Palette;
+  color: string;
+  /** The frame (or overlay card) the chip must stay inside. */
+  bounds: Rect;
+  obstacles?: Rect[];
+  prefer?: Side[];
+  gap?: number;
+  filled?: boolean;
+  alpha?: number;
+  /** Draw the chip above the anchor and keep a straight stem. */
+  role?: FontRole;
+  size?: number;
+};
+
+/**
+ * A label chip attached to an anchor with a leader line and an arrow at the
+ * target. Both endpoints are derived from the anchor's current rect, so the
+ * pointer moves with the object instead of with a hand-tuned coordinate.
+ */
+export function drawAnchorLabel(ctx: SKRSContext2D, opts: AnchorLabelOptions): Rect | null {
   const alpha = clamp01(opts.alpha ?? 1);
-  if (alpha <= 0.02) return;
-  const color = opts.color ?? pal.accent;
-  const side = opts.side ?? 'right';
-  const dir = side === 'right' ? 1 : -1;
-  const chipW = 132;
-  const chipH = 62;
-  const gap = 54;
-  const chipX = opts.x + dir * gap;
+  if (alpha <= 0.02) return null;
+  const size = opts.size ?? 26;
+  const role = opts.role ?? 'mono';
+  const labelW = textWidth(ctx, opts.label, role, 600, size);
+  const subW = opts.sub ? textWidth(ctx, opts.sub, 'mono', 400, size * 0.82) : 0;
+  const padX = Math.round(size * 0.85);
+  const w = Math.max(labelW, subW) + padX * 2;
+  const h = opts.sub ? size * 2.5 : size * 1.9;
+
+  const chip = placeChip({
+    anchor: opts.anchor,
+    w,
+    h,
+    bounds: opts.bounds,
+    obstacles: opts.obstacles ?? [],
+    gap: opts.gap ?? 30,
+    prefer: opts.prefer
+  });
+
+  const tail = anchorEdgePoint(opts.anchor, chip);
+  const head = chipEdgePoint(chip, opts.anchor);
 
   ctx.save();
   ctx.globalAlpha = alpha;
-
-  ctx.strokeStyle = rgba(color, 0.6);
+  ctx.strokeStyle = rgba(opts.color, 0.7);
   ctx.lineWidth = 2.4;
-  ctx.setLineDash([9, 9]);
   ctx.beginPath();
-  ctx.moveTo(opts.x, opts.y);
-  ctx.lineTo(chipX, opts.y);
+  ctx.moveTo(tail.x, tail.y);
+  // Elbow when the chip had to move off the anchor's centre line.
+  if (chip.side === 'above' || chip.side === 'below') {
+    ctx.lineTo(head.x, head.y + (chip.side === 'above' ? 6 : -6));
+    ctx.lineTo(head.x, head.y);
+  } else {
+    ctx.lineTo(head.x, head.y);
+  }
   ctx.stroke();
-  ctx.setLineDash([]);
 
-  ctx.fillStyle = rgba(color, 0.9);
+  // Anchor dot: unambiguous proof of the exact point being marked.
+  ctx.fillStyle = opts.color;
   ctx.beginPath();
-  ctx.moveTo(opts.x, opts.y);
-  ctx.lineTo(opts.x + dir * 16, opts.y - 9);
-  ctx.lineTo(opts.x + dir * 16, opts.y + 9);
-  ctx.closePath();
+  ctx.arc(tail.x, tail.y, 5.5, 0, Math.PI * 2);
   ctx.fill();
 
-  const x = side === 'right' ? chipX : chipX - chipW;
-  ctx.fillStyle = rgba('#050a12', 0.88);
-  roundRect(ctx, x, opts.y - chipH / 2, chipW, chipH, 14);
+  ctx.fillStyle = opts.filled ? opts.color : rgba('#060b14', 0.9);
+  roundRect(ctx, chip.x, chip.y, chip.w, chip.h, Math.round(chip.h / 2));
   ctx.fill();
-  ctx.strokeStyle = rgba(color, 0.55);
+  ctx.strokeStyle = opts.filled ? rgba('#000000', 0.18) : rgba(opts.color, 0.6);
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = font(24, 700, true);
-  ctx.fillStyle = color;
-  ctx.fillText(opts.label, x + chipW / 2, opts.y - (opts.sub ? 10 : 0));
+  const ink = opts.filled ? '#06101a' : opts.color;
   if (opts.sub) {
-    ctx.font = font(24, 700);
-    ctx.fillStyle = pal.ink;
-    ctx.fillText(opts.sub, x + chipW / 2, opts.y + 15);
+    drawText(ctx, opts.label, {
+      box: { x: chip.x + padX * 0.4, y: chip.y + chip.h * 0.14, w: chip.w - padX * 0.8, h: chip.h * 0.48 },
+      role,
+      weight: 600,
+      size: size * 0.92,
+      minSize: size * 0.62,
+      maxLines: 1,
+      align: 'center',
+      valign: 'middle',
+      color: ink,
+      group: opts.group,
+      truncateOk: true
+    });
+    drawText(ctx, opts.sub, {
+      box: { x: chip.x + padX * 0.4, y: chip.y + chip.h * 0.52, w: chip.w - padX * 0.8, h: chip.h * 0.4 },
+      role: 'mono',
+      weight: 400,
+      size: size * 0.8,
+      minSize: size * 0.55,
+      maxLines: 1,
+      align: 'center',
+      valign: 'middle',
+      color: opts.filled ? rgba('#06101a', 0.75) : rgba(opts.pal.ink, 0.82),
+      group: opts.group,
+      truncateOk: true
+    });
+  } else {
+    drawText(ctx, opts.label, {
+      box: { x: chip.x + padX * 0.4, y: chip.y, w: chip.w - padX * 0.8, h: chip.h },
+      role,
+      weight: 600,
+      size: size * 0.92,
+      minSize: size * 0.62,
+      maxLines: 1,
+      align: 'center',
+      valign: 'middle',
+      color: ink,
+      group: opts.group,
+      truncateOk: true
+    });
   }
+
   ctx.restore();
+  recordPointer(ctx, opts.group, { anchor: opts.anchorId, tail, head, target: opts.anchor });
+  return { x: chip.x, y: chip.y, w: chip.w, h: chip.h };
 }
 
 /** Rounded label used for markers, counters and callouts. */
@@ -435,23 +560,30 @@ export function drawChip(
     filled?: boolean;
     padX?: number;
     height?: number;
+    maxWidth?: number;
+    group?: string;
+    role?: FontRole;
+    /** Set when a cut is expected and should not be reported by the audit. */
+    truncateOk?: boolean;
   }
-): { width: number; height: number } {
+): { width: number; height: number; text: string; left: number } {
   const size = opts.size ?? 26;
-  const height = opts.height ?? Math.round(size * 2.1);
+  const role: FontRole = opts.role ?? (opts.mono === false ? 'text' : 'mono');
+  const height = opts.height ?? Math.round(size * 2.05);
   const alpha = clamp01(opts.alpha ?? 1);
+  const maxWidth = opts.maxWidth ?? DESIGN_W - SAFE * 2;
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.font = font(size, opts.weight ?? 700, opts.mono ?? true);
   const padX = opts.padX ?? Math.round(size * 0.72);
-  const width = ctx.measureText(label).width + padX * 2;
+  const cut = ellipsize(ctx, label, Math.max(size * 2, maxWidth - padX * 2), role, opts.weight ?? 600, size);
+  const width = cut.width + padX * 2;
   const left =
     opts.align === 'center' ? x - width / 2 : opts.align === 'right' ? x - width : x;
 
   if (opts.filled) {
     ctx.fillStyle = opts.color;
   } else {
-    ctx.fillStyle = rgba('#060b14', 0.82);
+    ctx.fillStyle = rgba('#060b14', 0.85);
   }
   roundRect(ctx, left, y - height / 2, width, height, Math.round(height / 2));
   ctx.fill();
@@ -459,12 +591,25 @@ export function drawChip(
   ctx.lineWidth = 2;
   ctx.stroke();
 
+  ctx.font = fontString(role, opts.weight ?? 600, size);
   ctx.fillStyle = opts.filled ? '#06101a' : opts.color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(label, left + width / 2, y + 1);
+  ctx.fillText(cut.text, left + width / 2, y + 1);
   ctx.restore();
-  return { width, height };
+
+  // A cut chip is a layout signal, not a silent loss of meaning.
+  if (alpha >= 0.15) {
+    recordText(
+      ctx,
+      opts.group ?? 'chip',
+      { x: left, y: y - height / 2, w: width, h: height },
+      label,
+      cut.truncated && !opts.truncateOk
+    );
+  }
+
+  return { width, height, text: cut.text, left };
 }
 
 /* ------------------------------------------------------------------ overlays */
@@ -478,47 +623,77 @@ export function hudHeader(
   const k = dims.width / DESIGN_W;
   const alpha = clamp01(opts.alpha ?? 1);
   const S = SAFE * k;
+  const width = dims.width - S * 2;
+  const size = 22 * k;
+  const baseline = (BAND.headerTop + 16) * k;
+  const watermark = (opts.watermark || 'VISUAL CS LAB').toUpperCase();
+  const watermarkWidth = Math.min(width * 0.6, textWidth(ctx, watermark, 'mono', 600, size));
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.font = font(23 * k, 600, true);
-  ctx.fillStyle = rgba(pal.ink, 0.45);
+  ctx.font = fontString('mono', 600, size);
+  ctx.fillStyle = rgba(pal.ink, 0.5);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillText(opts.watermark.toUpperCase(), S, S + 14 * k);
+  ctx.fillText(watermark, S, baseline);
+
+  const restWidth = width - watermarkWidth - 24 * k;
+  const step = ellipsize(ctx, opts.step, Math.max(0, restWidth), 'mono', 600, size);
   ctx.textAlign = 'right';
-  ctx.fillStyle = rgba(pal.ink, 0.55);
-  ctx.fillText(opts.step, dims.width - S, S + 14 * k);
+  ctx.fillStyle = rgba(pal.ink, 0.62);
+  ctx.fillText(step.text, dims.width - S, baseline);
   ctx.fillStyle = rgba(pal.ink, 0.12);
-  ctx.fillRect(S, S + 34 * k, dims.width - S * 2, Math.max(1, 1.4 * k));
+  ctx.fillRect(S, BAND.headerRule * k, width, Math.max(1, 1.4 * k));
   ctx.restore();
 }
 
-/** The operation banner: what is happening, and the state it produced. */
+/**
+ * The operation banner: what is happening, and the state it produced. It owns the
+ * band between the header and the stage, and both lines are fitted so a long
+ * `mid = floor((low + high) / 2)` banner stays inside the frame.
+ */
 export function hudOperation(
   ctx: SKRSContext2D,
   dims: Dims,
   pal: Palette,
   opts: { label: string; detail: string; accent?: string; alpha?: number; y?: number }
-): void {
+): number {
   const k = dims.width / DESIGN_W;
   const alpha = clamp01(opts.alpha ?? 1);
-  if (alpha <= 0.01) return;
+  if (alpha <= 0.01) return 0;
   const S = SAFE * k;
-  const y = (opts.y ?? 190) * k;
+  const top = (opts.y ?? BAND.operationTop) * k;
   const color = opts.accent ?? pal.accent;
+  const width = dims.width - S * 2 - 30 * k;
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = color;
-  ctx.fillRect(S, y - 54 * k, Math.max(2, 6 * k), 66 * k);
-  ctx.font = font(58 * k, 800);
-  ctx.fillStyle = pal.ink;
-  ctx.fillText(opts.label, S + 24 * k, y);
-  ctx.font = font(28 * k, 600, true);
-  ctx.fillStyle = rgba(pal.ink, 0.6);
-  ctx.fillText(opts.detail, S + 26 * k, y + 46 * k);
+  ctx.fillRect(S, top + 8 * k, Math.max(2, 6 * k), 76 * k);
+
+  const label = drawText(ctx, opts.label, {
+    box: { x: S + 26 * k, y: top, w: width, h: 54 * k },
+    role: 'display',
+    weight: 600,
+    size: 54 * k,
+    minSize: 34 * k,
+    maxLines: 1,
+    color: pal.ink,
+    group: 'operation-label'
+  });
+  drawText(ctx, opts.detail, {
+    box: { x: S + 28 * k, y: top + 58 * k, w: width, h: 46 * k },
+    role: 'mono',
+    weight: 400,
+    size: 26 * k,
+    minSize: 20 * k,
+    maxLines: 2,
+    lineHeight: 1.24,
+    color: rgba(pal.ink, 0.68),
+    group: 'operation-detail'
+  });
   ctx.restore();
+  return top + label.height + 60 * k;
 }
 
 /** A single, high-contrast moment: a returned value or a found index. */
@@ -531,34 +706,84 @@ export function toast(
   const k = dims.width / DESIGN_W;
   const alpha = clamp01(opts.alpha);
   if (alpha <= 0.01) return;
-  const y = (opts.y ?? 470) * k;
+  const centerY = (opts.y ?? (BAND.resultTop + 66)) * k;
   const scale = opts.scale ?? 1;
+  const S = SAFE * k;
+  const maxWidth = dims.width - S * 2;
+  const padX = 40 * k;
+
+  const textFit = fitText(ctx, opts.text, {
+    box: { x: 0, y: 0, w: maxWidth - padX * 2, h: 58 * k },
+    role: 'mono',
+    weight: 600,
+    size: 44 * k,
+    minSize: 26 * k,
+    maxLines: 1
+  });
+  const subFit = opts.sub
+    ? fitText(ctx, opts.sub, {
+        box: { x: 0, y: 0, w: maxWidth - padX * 2, h: 56 * k },
+        role: 'mono',
+        weight: 400,
+        size: 24 * k,
+        minSize: 18 * k,
+        maxLines: 2,
+        lineHeight: 1.25
+      })
+    : null;
+
+  const width = Math.min(maxWidth, Math.max(textFit.width, subFit?.width ?? 0) + padX * 2);
+  const height = textFit.height + (subFit?.height ?? 0) + (subFit ? 30 * k : 24 * k);
+  const top = centerY - height / 2;
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.translate(dims.width / 2, y);
+  ctx.translate(dims.width / 2, centerY);
   ctx.scale(scale, scale);
-  ctx.font = font(46 * k, 800, true);
-  const width = Math.min(dims.width - SAFE * 2 * k, ctx.measureText(opts.text).width + 96 * k);
-  const height = (opts.sub ? 132 : 96) * k;
-  ctx.fillStyle = rgba('#050a12', 0.9);
-  roundRect(ctx, -width / 2, -height / 2, width, height, height / 2);
+  ctx.translate(-dims.width / 2, -centerY);
+  ctx.fillStyle = rgba('#050a12', 0.92);
+  roundRect(ctx, (dims.width - width) / 2, top, width, height, Math.min(height / 2, 40 * k));
   ctx.fill();
-  ctx.strokeStyle = rgba(opts.color, 0.7);
+  ctx.strokeStyle = rgba(opts.color, 0.72);
   ctx.lineWidth = 2.4 * k;
   ctx.stroke();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = opts.color;
-  ctx.fillText(opts.text, 0, opts.sub ? -18 * k : 2 * k);
-  if (opts.sub) {
-    ctx.font = font(24 * k, 600, true);
-    ctx.fillStyle = rgba(pal.ink, 0.66);
-    ctx.fillText(opts.sub, 0, 28 * k);
-  }
   ctx.restore();
+
+  drawText(ctx, opts.text, {
+    box: { x: (dims.width - width) / 2 + padX, y: top + 12 * k, w: width - padX * 2, h: textFit.height },
+    role: 'mono',
+    weight: 600,
+    size: 44 * k,
+    minSize: 26 * k,
+    maxLines: 1,
+    align: 'center',
+    color: opts.color,
+    alpha,
+    group: 'result'
+  });
+  if (subFit && opts.sub) {
+    drawText(ctx, opts.sub, {
+      box: {
+        x: (dims.width - width) / 2 + padX,
+        y: top + textFit.height + 14 * k,
+        w: width - padX * 2,
+        h: subFit.height
+      },
+      role: 'mono',
+      weight: 400,
+      size: 24 * k,
+      minSize: 18 * k,
+      maxLines: 2,
+      lineHeight: 1.25,
+      align: 'center',
+      color: rgba(pal.ink, 0.7),
+      alpha,
+      group: 'result'
+    });
+  }
 }
 
-/** One or two lines of explanation at the bottom, inside the safe margin. */
+/** The explanation strip at the bottom, inside the safe margin. */
 export function captionBar(
   ctx: SKRSContext2D,
   dims: Dims,
@@ -570,27 +795,46 @@ export function captionBar(
   const value = (opts.text || '').trim();
   if (alpha <= 0.01 || !value) return;
   const S = SAFE * k;
-  const maxWidth = dims.width - S * 2 - 30 * k;
+  const padX = 40 * k;
+  const maxWidth = dims.width - S * 2 - padX * 2;
+
+  const fitted = fitText(ctx, value, {
+    box: { x: 0, y: 0, w: maxWidth, h: 168 * k },
+    role: 'text',
+    weight: 500,
+    size: 36 * k,
+    minSize: 22 * k,
+    maxLines: 3,
+    lineHeight: 1.36
+  });
+
+  const cardH = fitted.height + 52 * k;
+  const top = dims.height - BAND.captionGap * k - cardH;
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.font = font(36 * k, 600);
-  const lines = wrap(ctx, value, maxWidth, 2);
-  const lineHeight = 48 * k;
-  const blockH = lines.length * lineHeight;
-  const top = dims.height - 168 * k - blockH;
-  ctx.fillStyle = rgba('#050810', 0.72);
-  roundRect(ctx, S - 18 * k, top - 40 * k, dims.width - S * 2 + 36 * k, blockH + 56 * k, 22 * k);
+  ctx.fillStyle = rgba('#050810', 0.8);
+  roundRect(ctx, S, top, dims.width - S * 2, cardH, 22 * k);
   ctx.fill();
-  ctx.strokeStyle = rgba(pal.accent, 0.18);
+  ctx.strokeStyle = rgba(pal.accent, 0.2);
   ctx.lineWidth = 1.4 * k;
   ctx.stroke();
   ctx.fillStyle = rgba(opts.accent ?? pal.accent, 0.95);
-  ctx.fillRect(S, top - 26 * k, 4 * k, blockH + 12 * k);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = rgba(pal.ink, 0.88);
-  lines.forEach((line, index) => ctx.fillText(line, S + 14 * k, top + index * lineHeight));
+  ctx.fillRect(S + 14 * k, top + 18 * k, 4 * k, cardH - 36 * k);
   ctx.restore();
+
+  drawText(ctx, value, {
+    box: { x: S + padX, y: top + 26 * k, w: maxWidth, h: fitted.height },
+    role: 'text',
+    weight: 500,
+    size: 36 * k,
+    minSize: 22 * k,
+    maxLines: 3,
+    lineHeight: 1.36,
+    color: rgba(pal.ink, 0.9),
+    alpha,
+    group: 'caption'
+  });
 }
 
 export function footer(
@@ -601,7 +845,7 @@ export function footer(
 ): void {
   const k = dims.width / DESIGN_W;
   const S = SAFE * k;
-  const y = dims.height - 74 * k;
+  const y = dims.height - BAND.footer * k;
   const alpha = clamp01(opts.alpha ?? 1);
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -609,13 +853,23 @@ export function footer(
   ctx.fillRect(S, y, dims.width - S * 2, Math.max(1, 2 * k));
   ctx.fillStyle = rgba(pal.accent, 0.85);
   ctx.fillRect(S, y, (dims.width - S * 2) * clamp01(opts.progress), Math.max(1, 2.6 * k));
-  ctx.font = font(22 * k, 600, true);
-  ctx.fillStyle = rgba(pal.ink, 0.32);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText('VERIFIED TRACE · NO AUDIO', S, y + 34 * k);
-  ctx.textAlign = 'right';
-  ctx.fillText(opts.mark.toUpperCase(), dims.width - S, y + 34 * k);
+  const size = 20 * k;
+  const label = textWidth(ctx, 'SILENT SHORT · NO AUDIO TRACK', 'mono', 400, size);
+  text(ctx, 'SILENT SHORT · NO AUDIO TRACK', S, y + 30 * k, {
+    size,
+    color: rgba(pal.ink, 0.34),
+    mono: true,
+    weight: 400,
+    maxWidth: dims.width - S * 2 - label * 0.9
+  });
+  text(ctx, (opts.mark || '').toUpperCase(), dims.width - S, y + 30 * k, {
+    size,
+    color: rgba(pal.ink, 0.34),
+    mono: true,
+    weight: 400,
+    align: 'right',
+    maxWidth: dims.width * 0.4
+  });
   ctx.restore();
 }
 
@@ -635,6 +889,7 @@ export function brandEnd(
   const size = 148 * k;
   const cx = dims.width / 2;
   const baseY = dims.height * 0.44;
+  const width = dims.width - SAFE * 2 * k;
 
   ctx.save();
   ctx.globalAlpha = mark;
@@ -646,39 +901,62 @@ export function brandEnd(
   ctx.stroke();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = font(58 * k, 800);
+  ctx.font = fontString('display', 700, 58 * k);
   ctx.fillStyle = pal.accent;
   ctx.fillText('VL', cx, baseY + 3 * k);
   ctx.restore();
 
+  drawText(ctx, brand.name || 'Visual CS Lab', {
+    box: { x: SAFE * k, y: baseY + 150 * k, w: width, h: 92 * k },
+    role: 'display',
+    weight: 700,
+    size: 72 * k,
+    minSize: 40 * k,
+    maxLines: 1,
+    align: 'center',
+    color: pal.ink,
+    alpha: name,
+    group: 'brand'
+  });
+
   ctx.save();
   ctx.globalAlpha = name;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.font = font(74 * k, 800);
-  ctx.fillStyle = pal.ink;
-  ctx.fillText(brand.name || 'Visual CS Lab', cx, baseY + 230 * k);
   ctx.strokeStyle = rgba(pal.accent, 0.9);
   ctx.lineWidth = 4 * k;
   ctx.beginPath();
-  ctx.moveTo(cx - 120 * k * name, baseY + 268 * k);
-  ctx.lineTo(cx + 120 * k * name, baseY + 268 * k);
+  ctx.moveTo(cx - 120 * k * name, baseY + 282 * k);
+  ctx.lineTo(cx + 120 * k * name, baseY + 282 * k);
   ctx.stroke();
   ctx.restore();
 
-  ctx.save();
-  ctx.globalAlpha = tag;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.font = font(34 * k, 500);
-  ctx.fillStyle = rgba(pal.ink, 0.72);
-  ctx.fillText('Code-driven CS animation', cx, baseY + 336 * k);
+  drawText(ctx, 'Code-driven CS animation', {
+    box: { x: SAFE * k, y: baseY + 300 * k, w: width, h: 44 * k },
+    role: 'text',
+    weight: 500,
+    size: 32 * k,
+    minSize: 22 * k,
+    maxLines: 1,
+    align: 'center',
+    color: rgba(pal.ink, 0.72),
+    alpha: tag,
+    group: 'brand'
+  });
+
   if (brand.outro) {
-    ctx.font = font(26 * k, 600, true);
-    ctx.fillStyle = rgba(pal.accent, 0.85);
-    ctx.fillText(brand.outro, cx, baseY + 392 * k);
+    drawText(ctx, brand.outro, {
+      box: { x: SAFE * k, y: baseY + 348 * k, w: width, h: 52 * k },
+      role: 'mono',
+      weight: 400,
+      size: 24 * k,
+      minSize: 18 * k,
+      maxLines: 1,
+      align: 'center',
+      color: rgba(pal.accent, 0.9),
+      alpha: tag,
+      group: 'brand',
+      truncateOk: true
+    });
   }
-  ctx.restore();
 }
 
 /** Soft fade used between beats so nothing snaps. */
@@ -692,4 +970,4 @@ export function curtain(ctx: SKRSContext2D, dims: Dims, pal: Palette, alpha: num
   ctx.restore();
 }
 
-export { easeInCubic, easeOutCubic, lerp, track };
+export { easeOutCubic, lerp, track, overlapArea };

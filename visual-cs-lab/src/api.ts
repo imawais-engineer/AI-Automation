@@ -237,3 +237,37 @@ export type CreateResult = {
   issues: string[];
   renderable: boolean;
 };
+
+export type VoiceoverSegment = {
+  id: string;
+  scene: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+};
+
+export type VoiceoverScript = {
+  title: string;
+  durationSeconds: number;
+  segments: VoiceoverSegment[];
+  script: string;
+};
+
+export type VoiceoverCheck = { id: string; label: string; ok: boolean; detail: string };
+
+export type VoiceoverStatus = {
+  present: boolean;
+  outdated: boolean;
+  checks: VoiceoverCheck[];
+  ok: boolean;
+  script: VoiceoverScript | null;
+};
+
+export type SceneCheck = { id: string; label: string; ok: boolean; detail: string };
+
+export type SceneAudit = { ok: boolean; sampled: number; checks: SceneCheck[]; issues: string[] };
+
+export function formatTimestamp(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}

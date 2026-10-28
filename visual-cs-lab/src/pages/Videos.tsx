@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api, formatBytes, type Lesson, type RenderJob } from '../api';
+import VoiceoverPanel from '../components/VoiceoverPanel';
 import { isActive, parseChecks } from '../useRenderJob';
 
 type LessonRow = Lesson & { concept_name?: string; concept_slug?: string };
@@ -21,6 +22,7 @@ export default function Videos() {
   const [renders, setRenders] = useState<RenderJob[]>([]);
   const [error, setError] = useState('');
   const [busyLesson, setBusyLesson] = useState<string | null>(null);
+  const [scriptFor, setScriptFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -159,10 +161,23 @@ export default function Videos() {
                     Download
                   </a>
                 )}
+                <button
+                  type="button"
+                  className={`btn ${scriptFor === lesson.id ? 'primary' : 'ghost'}`}
+                  onClick={() => setScriptFor(scriptFor === lesson.id ? null : lesson.id)}
+                >
+                  Voice-over Script
+                </button>
                 <Link className="btn ghost" to={`/lessons/${lesson.id}`}>
                   Edit
                 </Link>
               </div>
+
+              {scriptFor === lesson.id && (
+                <div style={{ borderTop: '1px solid var(--line)', marginTop: 12, paddingTop: 12 }}>
+                  <VoiceoverPanel lessonId={lesson.id} />
+                </div>
+              )}
 
               {playable && (
                 <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10 }}>

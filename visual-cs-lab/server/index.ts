@@ -18,7 +18,12 @@ import {
   type Scene
 } from './scenes.ts';
 import { lessonPipeline } from './pipeline.ts';
+import { inspectPlan } from './anim/inspect.ts';
+import { motionForLesson } from './motion.ts';
+import { formatVoiceover } from './voiceover.ts';
+import { generateVoiceoverFor, saveVoiceoverEdits, voiceoverState } from './voiceover-store.ts';
 import { parseValidation } from './render/quality.ts';
+import { assertFontsLoaded, fontStatus } from './render/typography.ts';
 import {
   cancelJob,
   createJob,
@@ -72,7 +77,8 @@ function requireConcept(id: string): ConceptInput | null {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'visual-cs-lab', time: nowIso() });
+  const fonts = fontStatus();
+  res.json({ ok: true, service: 'visual-cs-lab', fonts: fonts.ok, time: nowIso() });
 });
 
 app.get('/api/overview', (_req, res) => {
@@ -327,6 +333,7 @@ app.get('/api/lessons/:id', (req, res) => {
   const renders = db
     .prepare('SELECT * FROM render_jobs WHERE lesson_id = ? ORDER BY created_at DESC')
     .all(req.params.id) as RenderJob[];
+  const voiceover = voiceoverState(req.params.id);
   res.json({
     lesson: { ...lesson, scenes: safeJson<Scene[]>(lesson.scenes, []) },
     concept,
@@ -337,7 +344,8 @@ app.get('/api/lessons/:id', (req, res) => {
     publishes: db
       .prepare('SELECT * FROM publish_jobs WHERE lesson_id = ? ORDER BY created_at DESC')
       .all(req.params.id),
-    pipeline: lessonPipeline({ lesson, concept, scenes, issues, renders })
+    voiceover,
+    pipeline: lessonPipeline({ lesson, concept, scenes, issues, renders, voiceover })
   });
 });
 
@@ -473,6 +481,56 @@ app.post('/api/lessons/:id/scenes/:sceneId/duplicate', (req, res) => {
   );
   const updated = { ...lesson, scenes: JSON.stringify(next) };
   res.status(201).json({ scenes: next, issues: lessonIssues(updated, concept) });
+});
+
+/* ---------------------------------------------------------------- voice-over */
+
+/** The stored script plus its freshness and accuracy checks. */
+app.get('/api/lessons/:id/voiceover', (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  const status = voiceoverState(req.params.id);
+  res.json({
+    voiceover: status,
+    markdown: status.script ? formatVoiceover(status.script) : ''
+  });
+});
+
+/** Generates or regenerates the script — no video render is needed for this. */
+app.post('/api/lessons/:id/voiceover', (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  const result = generateVoiceoverFor(req.params.id);
+  if (result.error) return res.status(400).json({ error: result.error });
+  const script = result.status?.script ?? null;
+  res.status(201).json({
+    voiceover: result.status,
+    markdown: script ? formatVoiceover(script) : ''
+  });
+});
+
+/** Saves wording edits to the narration of each scene. */
+app.patch('/api/lessons/:id/voiceover', (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  const raw = Array.isArray(req.body?.segments) ? (req.body.segments as unknown[]) : null;
+  if (!raw) return res.status(400).json({ error: 'Send the edited segments as an array.' });
+  const edits = raw
+    .map((item) => item as Record<string, unknown>)
+    .filter((item) => typeof item.id === 'string')
+    .map((item) => ({ id: String(item.id), text: String(item.text ?? '').slice(0, 600) }));
+  const result = saveVoiceoverEdits(req.params.id, edits);
+  if (result.error) return res.status(400).json({ error: result.error });
+  const script = result.status?.script ?? null;
+  res.json({
+    voiceover: result.status,
+    markdown: script ? formatVoiceover(script) : ''
+  });
+});
+
+/** Layout, pointer and algorithm-state inspection of the stored storyboard. */
+app.get('/api/lessons/:id/inspect', (req, res) => {
+  const built = motionForLesson(req.params.id);
+  if (!built) return res.status(400).json({ error: 'Build the storyboard first — there is no plan to inspect.' });
+  const audit = inspectPlan(built.motion);
+  res.json({ audit });
 });
 
 app.get('/api/lessons/:id/scene/:index.png', (req, res) => {
@@ -828,6 +886,9 @@ app.delete('/api/publishes/:id', (req, res) => {
 /* -------------------------------------------------------------------- client */
 
 async function start() {
+  // Rendering with a substitute typeface would break every fitted text box, so a
+  // missing bundled font stops the server instead of degrading silently.
+  assertFontsLoaded();
   const server = createServer(app);
   const vite = await createViteServer({
     configFile: path.resolve(process.cwd(), 'vite.config.ts'),

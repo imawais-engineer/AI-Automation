@@ -15,6 +15,8 @@ export type BeatKey = 'intro' | 'setup' | 'op' | 'lifo' | 'complexity' | 'brand'
 
 export type Beat = {
   key: BeatKey;
+  /** Storyboard scene this beat came from (`hook`, `concept`, `execution`, …). */
+  sceneType: string;
   startMs: number;
   endMs: number;
   sceneIndex: number;
@@ -179,6 +181,7 @@ export function buildStackPlan(args: {
       ops.push({ index: opIndex, event, startMs, endMs, blockId });
       beats.push({
         key: 'op',
+        sceneType: scene.type,
         startMs,
         endMs,
         sceneIndex: index,
@@ -204,7 +207,7 @@ export function buildStackPlan(args: {
               ? 'brand'
               : 'setup';
 
-    beats.push({ key, startMs, endMs, sceneIndex: index, title: scene.title, caption });
+    beats.push({ key, sceneType: scene.type, startMs, endMs, sceneIndex: index, title: scene.title, caption });
   }
 
   if (ops.length !== events.length) {
@@ -256,7 +259,7 @@ export function buildBinaryPlan(args: {
       traceStartMs = startMs;
       traceEndMs = endMs;
     }
-    beats.push({ key, startMs, endMs, sceneIndex: index, title: scene.title, caption: scene.caption || '' });
+    beats.push({ key, sceneType: scene.type, startMs, endMs, sceneIndex: index, title: scene.title, caption: scene.caption || '' });
   }
 
   if (traceStartMs < 0) {

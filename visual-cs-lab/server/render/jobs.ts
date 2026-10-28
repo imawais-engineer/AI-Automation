@@ -7,15 +7,10 @@ import { createCanvas, loadImage } from '@napi-rs/canvas';
 import ffmpegPath from 'ffmpeg-static';
 
 import { db, newId, nowIso, readBrand, type Brand } from '../db.ts';
-import {
-  effectiveConcept,
-  lessonIssues,
-  safeJson,
-  type ConceptInput,
-  type LessonInput,
-  type Scene
-} from '../scenes.ts';
+import { effectiveConcept, lessonIssues, safeJson, type Scene } from '../scenes.ts';
 import { drawMoment, planBrand, planFor, type MotionPlan } from '../anim/index.ts';
+import { inspectPlan } from '../anim/inspect.ts';
+import { lessonBundle, motionForLesson } from '../motion.ts';
 import { PROFILES, totalFrames, type OutputProfile, type Preset } from './profiles.ts';
 import {
   assessRender,
@@ -69,17 +64,7 @@ export type RenderJob = {
   finished_at: string | null;
 };
 
-export function lessonBundle(lessonId: string) {
-  const lesson = db.prepare('SELECT * FROM lessons WHERE id = ?').get(lessonId) as
-    | (LessonInput & { scenes: string })
-    | undefined;
-  if (!lesson) return null;
-  const concept = db.prepare('SELECT * FROM concepts WHERE id = ?').get(lesson.concept_id) as
-    | ConceptInput
-    | undefined;
-  if (!concept) return null;
-  return { lesson, concept };
-}
+export { lessonBundle } from '../motion.ts';
 
 function appendLog(id: string, line: string, progress?: number) {
   const stamp = new Date().toISOString().slice(11, 19);
@@ -471,6 +456,30 @@ async function renderJob(job: RenderJob): Promise<void> {
     });
     return;
   }
+  // Scene inspection runs before a single frame is encoded: text containment,
+  // text/object collisions, pointer-to-target alignment and the algorithm state
+  // each scene shows. A failure refuses the render instead of shipping it.
+  const audit = inspectPlan(motion);
+  appendLog(
+    job.id,
+    `scene inspection: ${audit.sampled} sampled moments · ${audit.checks.filter((check) => check.ok).length}/${audit.checks.length} checks passed`
+  );
+  if (!audit.ok) {
+    setState(job.id, 'error', {
+      error: `Scene inspection failed: ${audit.issues.join(' ')}`,
+      validation: JSON.stringify({
+        ok: false,
+        media: null,
+        checks: audit.checks,
+        humanReview: [],
+        samples: [],
+        validatedAt: nowIso()
+      }),
+      finished_at: nowIso()
+    });
+    return;
+  }
+
   const plannedFrames = totalFrames(motion.durationMs, profile.fps);
   appendLog(
     job.id,
@@ -510,6 +519,9 @@ async function renderJob(job: RenderJob): Promise<void> {
 
   try {
     const validation = await validateOutput(job, output, profile);
+    // The encoded file's checks and the plan's scene checks belong to one report.
+    validation.checks.push(...audit.checks);
+    validation.ok = validation.ok && audit.checks.every((check) => check.ok);
     const info = await stat(output);
     const failed = validation.checks.filter((check) => !check.ok);
     appendLog(
@@ -551,20 +563,7 @@ async function renderJob(job: RenderJob): Promise<void> {
 }
 
 function motionFor(lessonId: string): MotionPlan | null {
-  const bundle = lessonBundle(lessonId);
-  if (!bundle) return null;
-  const scenes = safeJson<Scene[]>(bundle.lesson.scenes || '[]', []);
-  if (scenes.length === 0) return null;
-  try {
-    return planFor({
-      lesson: bundle.lesson,
-      concept: effectiveConcept(bundle.lesson, bundle.concept),
-      scenes,
-      brand: planBrand(readBrand() as Brand)
-    });
-  } catch {
-    return null;
-  }
+  return motionForLesson(lessonId)?.motion ?? null;
 }
 
 /** A frame from the middle of one beat, used for real storyboard thumbnails. */

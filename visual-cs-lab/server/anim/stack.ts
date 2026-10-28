@@ -6,6 +6,10 @@
  * verified `StackEvent` list — a push drops a block onto slot `items.length - 1`,
  * a pop lifts and retires the block the trace says was removed. The environment
  * never cuts away between operations.
+ *
+ * The TOP pointer is not positioned by hand: it is anchored to the rendered bounds
+ * of the block that is currently on top, so it follows every push, pop and camera
+ * move exactly.
  */
 
 import type { SKRSContext2D } from '@napi-rs/canvas';
@@ -20,30 +24,33 @@ import {
   lerp,
   track
 } from './easing.ts';
+import { AnchorMap, type Rect } from './anchors.ts';
 import type { Beat, StackBlock, StackPlan } from './plan.ts';
 import {
+  BAND,
+  SAFE,
   backdrop,
   brandEnd,
   captionBar,
   curtain,
+  drawAnchorLabel,
   drawBlock,
   drawChip,
   drawPlatform,
-  drawTopPointer,
   footer,
   hudHeader,
   hudOperation,
   paletteOf,
   popCamera,
   pushCamera,
-  text,
+  safeBox,
   toast,
   type Camera,
   type Dims,
   type Palette
 } from './stage.ts';
+import { drawText } from '../render/layout.ts';
 import { rgba, roundRect } from '../render/paint.ts';
-import { SANS } from '../render/typography.ts';
 
 const FLOOR_Y = 430;
 const SLOT = 136;
@@ -52,7 +59,7 @@ const BLOCK_H = 118;
 const ENTRY_DROP = 320;
 
 const camYFor = (count: number): number => 470 - 68 * Math.min(count, 6);
-const surfaceYFor = (count: number): number => (count === 0 ? FLOOR_Y - 20 : FLOOR_Y - count * SLOT);
+const platformSurfaceY = FLOOR_Y - 20;
 
 /** Camera keys: framing follows the tower as it grows, without cutting. */
 function cameraKeys(plan: StackPlan): { at: number; y: number; zoom: number }[] {
@@ -103,6 +110,8 @@ export type StackBlockState = {
   scale: number;
   glow: number;
   tone: 'normal' | 'active' | 'match';
+  /** Rendered bounds, including the scale animation. */
+  rect: Rect;
 };
 
 export function blocksAt(plan: StackPlan, tMs: number): StackBlockState[] {
@@ -163,7 +172,12 @@ export function blocksAt(plan: StackPlan, tMs: number): StackBlockState[] {
       tone = 'active';
     }
 
-    out.push({ block, bottom, x, alpha: clamp01(alpha), scale, glow: clamp01(glow), tone });
+    const cx = x + 0;
+    const width = BLOCK_W * scale;
+    const height = BLOCK_H * scale;
+    const rect: Rect = { x: cx - width / 2, y: bottom - height, w: width, h: height };
+
+    out.push({ block, bottom, x, alpha: clamp01(alpha), scale, glow: clamp01(glow), tone, rect });
   }
 
   return out.sort((a, b) => a.block.slot - b.block.slot);
@@ -178,31 +192,30 @@ export function stackStateAt(plan: StackPlan, tMs: number): { items: number[]; t
   return { items: live, top: live.length ? live[live.length - 1] : null, size: live.length };
 }
 
-function pointerY(plan: StackPlan, tMs: number): { y: number; empty: boolean } {
-  let settled = 0;
-  let y = surfaceYFor(0);
-  for (const op of plan.ops) {
-    const from = surfaceYFor(settled);
-    settled = op.event.items.length;
-    const to = surfaceYFor(settled);
-    if (tMs >= op.endMs) {
-      y = to;
-      continue;
-    }
-    if (tMs <= op.startMs) break;
-    const w = op.endMs - op.startMs;
-    const p = easeInOutCubic(track(tMs, op.startMs + w * 0.42, op.startMs + w * 0.78));
-    y = lerp(from, to, p);
-    return { y, empty: settled === 0 && p > 0.5 };
-  }
-  if (settled === 0) y = surfaceYFor(0);
-  return { y, empty: settled === 0 };
+/**
+ * The block the TOP marker belongs to right now: the highest block that has landed
+ * and is not already leaving — the same predicate `stackStateAt` counts with, so
+ * TOP and the size readout can never disagree while a block is still dropping in.
+ */
+function topBlockAt(blocks: StackBlockState[], tMs: number): StackBlockState | null {
+  const candidates = blocks.filter(
+    (item) => tMs >= item.block.landedMs && (item.block.deathMs === null || tMs < item.block.deathMs)
+  );
+  if (candidates.length === 0) return null;
+  return candidates.reduce((top, item) => (item.block.slot > top.block.slot ? item : top), candidates[0]);
 }
 
 function beatProgress(beat: Beat, tMs: number): number {
   return clamp01((tMs - beat.startMs) / Math.max(1, beat.endMs - beat.startMs));
 }
 
+/* ---------------------------------------------------------------- explanation */
+
+/**
+ * Complexity beat: one card with three fitted rows, then the underflow example as
+ * a clearly separate inset. Every string is measured into its own box, so the card
+ * cannot overflow at any width.
+ */
 function complexityPanel(
   ctx: SKRSContext2D,
   dims: Dims,
@@ -223,39 +236,66 @@ function complexityPanel(
 
   ctx.save();
   ctx.globalAlpha = panel * (1 - track(p, 0.5, 0.62));
-  ctx.fillStyle = rgba('#050a12', 0.86);
+  ctx.fillStyle = rgba('#050a12', 0.88);
   roundRect(ctx, x, y, w, h, 26 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.3);
   ctx.lineWidth = 2 * k;
   ctx.stroke();
-  text(ctx, 'EVERY OPERATION TOUCHES ONLY THE TOP', x + 34 * k, y + 52 * k, {
-    size: 24 * k,
-    color: rgba(pal.ink, 0.55),
-    mono: true
+  ctx.restore();
+
+  drawText(ctx, 'EVERY OPERATION TOUCHES ONLY THE TOP', {
+    box: { x: x + 34 * k, y: y + 30 * k, w: w - 68 * k, h: 34 * k },
+    role: 'mono',
+    weight: 400,
+    size: 23 * k,
+    minSize: 17 * k,
+    maxLines: 1,
+    color: rgba(pal.ink, 0.6),
+    alpha: panel * (1 - track(p, 0.5, 0.62)),
+    group: 'complexity'
   });
+
   const rows = [
     { label: 'PUSH', value: plan.copy.time.match(/O\([^)]+\)/)?.[0] || 'O(1)' },
     { label: 'POP', value: 'O(1)' },
     { label: 'PEEK', value: 'O(1)' }
   ];
+  const rowY = y + 92 * k;
+  const chipW = (w - 68 * k) / 3;
   rows.forEach((row, index) => {
-    const rowY = y + 108 * k + index * 0;
-    const chipW = (w - 68 * k) / 3;
     const cx = x + 34 * k + index * chipW;
+    ctx.save();
+    ctx.globalAlpha = panel * (1 - track(p, 0.5, 0.62));
     ctx.fillStyle = rgba(index === 0 ? pal.accent : pal.violet, 0.1);
-    roundRect(ctx, cx, rowY - 26 * k, chipW - 14 * k, 68 * k, 16 * k);
+    roundRect(ctx, cx, rowY, chipW - 16 * k, 76 * k, 16 * k);
     ctx.fill();
-    text(ctx, row.label, cx + 18 * k, rowY + 16 * k, { size: 28 * k, color: pal.ink, weight: 700, mono: true });
-    text(ctx, row.value, cx + chipW - 32 * k, rowY + 16 * k, {
+    ctx.restore();
+
+    drawText(ctx, row.label, {
+      box: { x: cx + 18 * k, y: rowY + 18 * k, w: chipW * 0.52, h: 40 * k },
+      role: 'mono',
+      weight: 600,
+      size: 26 * k,
+      minSize: 18 * k,
+      maxLines: 1,
+      color: pal.ink,
+      alpha: panel * (1 - track(p, 0.5, 0.62)),
+      group: 'complexity'
+    });
+    drawText(ctx, row.value, {
+      box: { x: cx + chipW * 0.5 - 16 * k, y: rowY + 16 * k, w: chipW * 0.42, h: 44 * k },
+      role: 'mono',
+      weight: 600,
       size: 28 * k,
+      minSize: 18 * k,
+      maxLines: 1,
+      align: 'right',
       color: pal.accent,
-      weight: 800,
-      mono: true,
-      align: 'right'
+      alpha: panel * (1 - track(p, 0.5, 0.62)),
+      group: 'complexity'
     });
   });
-  ctx.restore();
 
   const under = track(p, 0.52, 0.62) * (1 - track(p, 0.9, 1));
   if (under <= 0.01) return;
@@ -278,43 +318,65 @@ function complexityPanel(
   ctx.stroke();
 
   drawChip(ctx, insetX + 34 * k, insetY + 54 * k, 'EXAMPLE · NOT PART OF THE TRACE', {
-    size: 22 * k,
+    size: 20 * k,
     color: pal.coral,
-    align: 'left'
+    align: 'left',
+    maxWidth: insetW - 68 * k,
+    group: 'complexity'
   });
-  text(ctx, 'POP() on an empty stack', insetX + 34 * k, insetY + 138 * k, {
+
+  drawText(ctx, 'POP() on an empty stack', {
+    box: { x: insetX + 34 * k, y: insetY + 96 * k, w: insetW - 68 * k, h: 60 * k },
+    role: 'display',
+    weight: 600,
     size: 42 * k,
+    minSize: 28 * k,
+    maxLines: 1,
     color: pal.ink,
-    weight: 800
+    group: 'complexity'
   });
-  text(ctx, 'returned EMPTY · size stays 0', insetX + 34 * k, insetY + 188 * k, {
-    size: 30 * k,
-    color: rgba(pal.ink, 0.65),
-    mono: true
+  drawText(ctx, 'returned EMPTY · size stays 0', {
+    box: { x: insetX + 34 * k, y: insetY + 158 * k, w: insetW - 68 * k, h: 40 * k },
+    role: 'mono',
+    weight: 400,
+    size: 28 * k,
+    minSize: 20 * k,
+    maxLines: 1,
+    color: rgba(pal.ink, 0.68),
+    group: 'complexity'
   });
 
   const emptyX = insetX + insetW / 2;
-  const plateY = insetY + insetH - 118 * k;
+  const plateY = insetY + insetH - 116 * k;
+  ctx.save();
   ctx.fillStyle = rgba(pal.accent, 0.1);
   roundRect(ctx, emptyX - 200 * k, plateY - 22 * k, 400 * k, 44 * k, 12 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.3);
   ctx.lineWidth = 2 * k;
   ctx.stroke();
-  text(ctx, 'TOP = empty', emptyX, plateY + 60 * k, {
-    size: 30 * k,
+  ctx.restore();
+
+  drawText(ctx, 'TOP = empty', {
+    box: { x: insetX + 34 * k, y: plateY + 36 * k, w: insetW - 68 * k, h: 44 * k },
+    role: 'mono',
+    weight: 600,
+    size: 28 * k,
+    minSize: 20 * k,
+    maxLines: 1,
+    align: 'center',
     color: pal.coral,
-    weight: 700,
-    mono: true,
-    align: 'center'
+    group: 'complexity'
   });
 
   const popPulse = bump(tMs, beat.startMs + (beat.endMs - beat.startMs) * 0.62, 900);
-  drawChip(ctx, emptyX, plateY - 74 * k - popPulse * 10 * k, 'POP() → EMPTY', {
-    size: 28 * k,
+  drawChip(ctx, emptyX, plateY - 66 * k - popPulse * 10 * k, 'POP() → EMPTY', {
+    size: 26 * k,
     color: pal.coral,
     align: 'center',
-    filled: true
+    filled: true,
+    maxWidth: insetW - 68 * k,
+    group: 'complexity'
   });
   ctx.restore();
 }
@@ -337,37 +399,66 @@ function lifoOverlay(
   const topValue = items.length ? items[items.length - 1] : null;
   const bottomValue = items.length ? items[0] : null;
 
-  ctx.save();
-  ctx.globalAlpha = alpha;
   const cardW = dims.width - 180 * k;
   const cardX = 90 * k;
   const cardY = dims.height - 470 * k;
-  ctx.fillStyle = rgba('#050a12', 0.85);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = rgba('#050a12', 0.86);
   roundRect(ctx, cardX, cardY, cardW, 150 * k, 24 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.28);
   ctx.lineWidth = 2 * k;
   ctx.stroke();
-  text(ctx, 'LIFO', cardX + 32 * k, cardY + 70 * k, { size: 52 * k, color: pal.accent, weight: 800, mono: true });
-  text(ctx, 'Last In, First Out', cardX + 32 * k, cardY + 114 * k, {
-    size: 30 * k,
-    color: rgba(pal.ink, 0.75),
-    weight: 600
-  });
-  text(ctx, `${topValue ?? '—'} leaves before ${bottomValue ?? '—'}`, cardX + cardW - 32 * k, cardY + 74 * k, {
-    size: 28 * k,
-    color: pal.coral,
-    weight: 700,
-    mono: true,
-    align: 'right'
-  });
-  text(ctx, `${String(topValue ?? '—')} was pushed last`, cardX + cardW - 32 * k, cardY + 114 * k, {
-    size: 24 * k,
-    color: rgba(pal.ink, 0.55),
-    mono: true,
-    align: 'right'
-  });
   ctx.restore();
+
+  drawText(ctx, 'LIFO', {
+    box: { x: cardX + 32 * k, y: cardY + 26 * k, w: 150 * k, h: 56 * k },
+    role: 'display',
+    weight: 700,
+    size: 48 * k,
+    minSize: 30 * k,
+    maxLines: 1,
+    color: pal.accent,
+    alpha,
+    group: 'lifo'
+  });
+  drawText(ctx, 'Last In, First Out', {
+    box: { x: cardX + 32 * k, y: cardY + 90 * k, w: cardW * 0.5, h: 40 * k },
+    role: 'text',
+    weight: 500,
+    size: 28 * k,
+    minSize: 20 * k,
+    maxLines: 1,
+    color: rgba(pal.ink, 0.78),
+    alpha,
+    group: 'lifo'
+  });
+  drawText(ctx, `${topValue ?? '—'} leaves before ${bottomValue ?? '—'}`, {
+    box: { x: cardX + cardW * 0.46, y: cardY + 30 * k, w: cardW * 0.5 - 32 * k, h: 44 * k },
+    role: 'mono',
+    weight: 600,
+    size: 26 * k,
+    minSize: 18 * k,
+    maxLines: 1,
+    align: 'right',
+    color: pal.coral,
+    alpha,
+    group: 'lifo'
+  });
+  drawText(ctx, `${String(topValue ?? '—')} was pushed last`, {
+    box: { x: cardX + cardW * 0.46, y: cardY + 88 * k, w: cardW * 0.5 - 32 * k, h: 40 * k },
+    role: 'mono',
+    weight: 400,
+    size: 23 * k,
+    minSize: 17 * k,
+    maxLines: 1,
+    align: 'right',
+    color: rgba(pal.ink, 0.6),
+    alpha,
+    group: 'lifo'
+  });
 
   // A ghost of the newest value lifts out and returns: the LIFO demonstration.
   if (topValue !== null) {
@@ -384,10 +475,52 @@ function lifoOverlay(
       pal,
       tone: 'match',
       glow: lift,
-      alpha: 0.9
+      alpha: 0.9,
+      group: 'lifo-ghost'
     });
     ctx.restore();
   }
+}
+
+/** The opening headline: Space Grotesk, large, fitted and deliberately broken. */
+function hookHeadline(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  plan: StackPlan,
+  beat: Beat,
+  tMs: number
+): void {
+  const k = dims.width / 1080;
+  const p = beatProgress(beat, tMs);
+  const alpha = envelope(tMs, beat.startMs, beat.endMs, 320, 380);
+  const rise = (1 - easeOutCubic(track(p, 0, 0.42))) * 26 * k;
+  const box = safeBox(k, BAND.hookTop, BAND.hookBottom);
+
+  const fitted = drawText(ctx, plan.copy.hook || 'A stack only lets you touch the top.', {
+    box: { ...box, y: box.y + rise },
+    role: 'display',
+    weight: 700,
+    size: 92 * k,
+    minSize: 46 * k,
+    maxLines: 4,
+    lineHeight: 1.12,
+    color: pal.ink,
+    alpha,
+    group: 'hook'
+  });
+
+  const ruleY = box.y + rise + fitted.height + 22 * k;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = rgba(pal.accent, 0.9);
+  ctx.lineWidth = 5 * k;
+  const grow = easeOutCubic(track(p, 0.2, 0.6));
+  ctx.beginPath();
+  ctx.moveTo(SAFE * k, ruleY);
+  ctx.lineTo(SAFE * k + 200 * k * grow, ruleY);
+  ctx.stroke();
+  ctx.restore();
 }
 
 /** Draws one moment of the stack short. */
@@ -399,67 +532,93 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
   const cam = sampleCamera(plan, tMs);
   const brandBeat = plan.beats.find((item) => item.key === 'brand');
   const inBrand = Boolean(brandBeat && tMs >= brandBeat.startMs);
+  const k = dims.width / 1080;
+  // The underflow inset owns the frame in the second half of the complexity beat,
+  // so the tower fades out instead of sitting underneath the card.
+  const complexityBeatForStage = plan.beats.find((item) => item.key === 'complexity');
+  const stageFade = complexityBeatForStage
+    ? 1 - track(beatProgress(complexityBeatForStage, tMs), 0.48, 0.58)
+    : 1;
 
   backdrop(ctx, dims, cam, pal, tMs, { glow: inBrand ? 0.6 : 1 });
 
-  pushCamera(ctx, dims, cam);
-  drawPlatform(ctx, { x: -430, y: FLOOR_Y, w: 860, pal, alpha: inBrand ? 0.35 : 1 });
-  text(ctx, 'STACK', 0, FLOOR_Y + 112, {
-    size: 24,
-    color: rgba(pal.ink, 0.3),
-    mono: true,
-    align: 'center'
-  });
+  const anchors = new AnchorMap();
+  const obstacles: Rect[] = [];
 
+  pushCamera(ctx, dims, cam);
+  drawPlatform(ctx, { x: -430, y: FLOOR_Y, w: 860, pal, alpha: (inBrand ? 0.35 : 1) * stageFade });
   const blocks = blocksAt(plan, tMs);
   for (const item of blocks) {
-    const y = item.bottom - BLOCK_H;
     drawBlock(ctx, {
-      x: -BLOCK_W / 2 + item.x,
-      y,
+      x: item.x - BLOCK_W / 2,
+      y: item.bottom - BLOCK_H,
       w: BLOCK_W,
       h: BLOCK_H,
       value: item.block.value,
       pal,
       tone: item.tone,
-      alpha: item.alpha,
+      alpha: item.alpha * stageFade,
       scale: item.scale,
-      glow: item.glow
+      glow: item.glow,
+      group: `block:${item.block.id}`
     });
+    anchors.set(`block:${item.block.id}`, item.rect);
+    if (item.alpha > 0.4) obstacles.push(item.rect);
   }
 
   // Slot indices on the left keep the spatial order unambiguous.
   for (const item of blocks) {
-    if (item.alpha < 0.5) continue;
-    const y = item.bottom - BLOCK_H / 2;
-    text(ctx, String(item.block.slot), -BLOCK_W / 2 - 46, y + 9, {
-      size: 26,
-      color: rgba(pal.ink, 0.38),
-      mono: true,
+    if (item.alpha < 0.5 || stageFade < 0.5) continue;
+    const centerY = item.rect.y + item.rect.h / 2;
+    drawText(ctx, String(item.block.slot), {
+      box: { x: item.rect.x - 132, y: centerY - 20, w: 96, h: 40 },
+      role: 'mono',
+      weight: 400,
+      size: 25,
+      minSize: 18,
+      maxLines: 1,
       align: 'right',
-      alpha: item.alpha
+      color: rgba(pal.ink, 0.42),
+      alpha: item.alpha * stageFade,
+      group: 'slot-index'
     });
     ctx.fillStyle = rgba(pal.ink, 0.16);
-    ctx.fillRect(-BLOCK_W / 2 - 34, y, 16, 2);
+    ctx.fillRect(item.rect.x - 30, centerY, 16, 2);
   }
 
-  if (!inBrand) {
-    const pointer = pointerY(plan, tMs);
-    drawTopPointer(ctx, {
-      x: BLOCK_W / 2,
-      y: pointer.empty ? FLOOR_Y - 8 : pointer.y - BLOCK_H / 2,
+  if (!inBrand && stageFade > 0.2) {
+    const top = topBlockAt(blocks, tMs);
+    const platformAnchor: Rect = { x: -300, y: platformSurfaceY - 60, w: 600, h: 60 };
+    const anchor = top ? top.rect : anchors.set('platform', platformAnchor);
+    const anchorId = top ? `block:${top.block.id}` : 'platform';
+    const empty = !top;
+    const pointerObstacles = obstacles.filter((rect) => rect !== anchor);
+
+    drawAnchorLabel(ctx, {
+      anchor,
+      anchorId,
+      group: 'top-pointer',
       label: 'TOP',
-      sub: pointer.empty ? 'empty' : String(state.top ?? '—'),
+      sub: empty ? 'empty' : String(top?.block.value ?? '—'),
       pal,
-      alpha: 0.95,
-      color: pointer.empty ? pal.coral : pal.accent
+      color: empty ? pal.coral : pal.accent,
+      bounds: { x: -SAFE, y: -760, w: 1080 + SAFE * 2, h: 1520 },
+      obstacles: pointerObstacles,
+      prefer: ['right', 'left', 'above'],
+      size: 26,
+      gap: 34
     });
 
-    // Size readout on the platform edge.
-    text(ctx, `size ${state.size}`, -430, FLOOR_Y + 54, {
-      size: 24,
-      color: rgba(pal.ink, 0.42),
-      mono: true
+    // Size readout sits on the plinth's own lip, never below it.
+    drawText(ctx, `size ${state.size}`, {
+      box: { x: -420, y: FLOOR_Y - 2, w: 240, h: 30 },
+      role: 'mono',
+      weight: 600,
+      size: 21,
+      minSize: 16,
+      maxLines: 1,
+      color: rgba(pal.ink, 0.6),
+      group: 'stage-label'
     });
   }
 
@@ -474,53 +633,38 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
     alpha: headerAlpha
   });
 
-  const k = dims.width / 1080;
   const hookBeat = plan.beats.find((item) => item.key === 'intro');
   const setupBeat = plan.beats.find((item) => item.key === 'setup');
 
   if (hookBeat && tMs >= hookBeat.startMs && tMs < hookBeat.endMs) {
-    const p = beatProgress(hookBeat, tMs);
     const alpha = envelope(tMs, hookBeat.startMs, hookBeat.endMs, 320, 380);
-    drawChip(ctx, 64 * k, 300 * k, 'STACK · LIFO', { size: 24 * k, color: pal.accent, align: 'left' });
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.translate(0, (1 - easeOutCubic(track(p, 0, 0.4))) * 28 * k);
-    ctx.font = `800 ${Math.round(74 * k)}px ${SANS}`;
-    ctx.fillStyle = pal.ink;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    const words = (plan.copy.hook || 'A stack only lets you touch the top.').split(' ');
-    const lines: string[] = [];
-    let line = '';
-    for (const word of words) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (ctx.measureText(candidate).width > dims.width - 150 * k && line) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = candidate;
-      }
-    }
-    if (line) lines.push(line);
-    lines.slice(0, 3).forEach((item, index) => ctx.fillText(item, 64 * k, 410 * k + index * 88 * k));
-    ctx.strokeStyle = rgba(pal.accent, 0.9);
-    ctx.lineWidth = 5 * k;
-    const grow = easeOutCubic(track(p, 0.2, 0.55));
-    ctx.beginPath();
-    ctx.moveTo(64 * k, 410 * k + lines.slice(0, 3).length * 88 * k + 6 * k);
-    ctx.lineTo(64 * k + 190 * k * grow, 410 * k + lines.slice(0, 3).length * 88 * k + 6 * k);
-    ctx.stroke();
-    ctx.restore();
+    drawChip(ctx, SAFE * k, BAND.kicker * k, 'STACK · LIFO', {
+      size: 23 * k,
+      color: pal.accent,
+      align: 'left',
+      alpha,
+      maxWidth: dims.width - 2 * SAFE * k,
+      group: 'kicker'
+    });
+    hookHeadline(ctx, dims, pal, plan, hookBeat, tMs);
   }
 
   if (setupBeat && tMs >= setupBeat.startMs && tMs < setupBeat.endMs) {
     const alpha = envelope(tMs, setupBeat.startMs, setupBeat.endMs, 220, 260);
-    drawChip(ctx, 64 * k, 300 * k, 'STACK · LIFO', { size: 24 * k, color: pal.accent, align: 'left', alpha });
+    drawChip(ctx, SAFE * k, BAND.kicker * k, 'STACK · LIFO', {
+      size: 23 * k,
+      color: pal.accent,
+      align: 'left',
+      alpha,
+      maxWidth: dims.width - 2 * SAFE * k,
+      group: 'kicker'
+    });
     hudOperation(ctx, dims, pal, {
       label: 'PUSH adds · POP removes',
       detail: 'only the top element is reachable',
       alpha
     });
+    captionBar(ctx, dims, pal, { text: beat.caption || plan.copy.objective, alpha });
   }
 
   if (activeOp) {

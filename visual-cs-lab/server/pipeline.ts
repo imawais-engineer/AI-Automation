@@ -82,14 +82,22 @@ export function bestRender(renders: RenderRef[]): (RenderRef & { parsed: RenderV
   return finished.find((job) => job.parsed?.ok) || finished[0] || null;
 }
 
+export type VoiceoverRef = {
+  present: boolean;
+  outdated: boolean;
+  ok: boolean;
+  checks: { id: string; label: string; ok: boolean; detail: string }[];
+};
+
 export function lessonPipeline(args: {
   lesson: LessonInput;
   concept: ConceptInput;
   scenes: Scene[];
   issues: string[];
   renders: RenderRef[];
+  voiceover?: VoiceoverRef;
 }): Pipeline {
-  const { lesson, concept, scenes, issues, renders } = args;
+  const { lesson, concept, scenes, issues, renders, voiceover } = args;
   const run = runConcept(concept);
   const render = bestRender(renders);
 
@@ -98,7 +106,8 @@ export function lessonPipeline(args: {
   const storyboardReady = traceVerified && scenes.length > 0 && issues.length === 0;
   const rendered = storyboardReady && Boolean(render);
   const qualityChecked = rendered && Boolean(render?.parsed?.ok);
-  const readyToPublish = qualityChecked && lesson.review_status === 'approved';
+  const voiceoverOk = Boolean(voiceover?.ok);
+  const readyToPublish = qualityChecked && lesson.review_status === 'approved' && voiceoverOk;
 
   const stage: PipelineStage = readyToPublish
     ? 'ready_to_publish'
@@ -159,9 +168,11 @@ export function lessonPipeline(args: {
       label: 'Ready to publish',
       status: readyToPublish ? 'done' : qualityChecked ? 'current' : 'blocked',
       detail: readyToPublish
-        ? 'Marked approved after human review.'
+        ? 'Marked approved after human review, with a current voice-over script.'
         : lesson.review_status === 'approved'
-          ? 'A quality-checked render is still missing.'
+          ? qualityChecked && !voiceoverOk
+            ? 'A current voice-over script is still missing.'
+            : 'A quality-checked render is still missing.'
           : 'Set the review status to approved once you have watched the render.'
     }
   ];
@@ -199,6 +210,26 @@ export function lessonPipeline(args: {
       kind: 'auto',
       ok: scenes.some((scene) => scene.type === 'brand'),
       detail: scenes.some((scene) => scene.type === 'brand') ? 'Visual CS Lab closing scene' : 'Rebuild the storyboard.'
+    },
+    {
+      key: 'voiceover',
+      label: 'Voice-over script',
+      kind: 'auto',
+      ok: voiceover ? voiceover.present && !voiceover.outdated : false,
+      detail: !voiceover || !voiceover.present
+        ? 'Generate the voice-over script for this video.'
+        : voiceover.outdated
+          ? 'The script is out of date — regenerate it after the lesson changed.'
+          : 'Timestamped script aligned with the scene timeline.'
+    },
+    {
+      key: 'narration',
+      label: 'Narration matches the scenes',
+      kind: 'auto',
+      ok: voiceover ? voiceover.checks.every((check) => check.ok) : false,
+      detail: voiceover
+        ? voiceover.checks.find((check) => !check.ok)?.detail || 'Timestamps, pace and stated results all check out.'
+        : 'No script to check yet.'
     },
     {
       key: 'legibility',

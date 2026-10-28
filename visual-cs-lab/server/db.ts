@@ -104,6 +104,17 @@ CREATE TABLE IF NOT EXISTS render_jobs (
   finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS voiceovers (
+  lesson_id TEXT PRIMARY KEY REFERENCES lessons(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '',
+  duration_seconds REAL NOT NULL DEFAULT 0,
+  segments TEXT NOT NULL DEFAULT '[]',
+  script TEXT NOT NULL DEFAULT '',
+  source_hash TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS publish_jobs (
   id TEXT PRIMARY KEY,
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
@@ -143,6 +154,7 @@ ensureColumn('render_jobs', 'snapshot', "TEXT NOT NULL DEFAULT '[]'");
 ensureColumn('render_jobs', 'validation', 'TEXT');
 /** Per-lesson animation input chosen on the Create screen. */
 ensureColumn('lessons', 'animation_input', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('voiceovers', 'duration_seconds', 'REAL NOT NULL DEFAULT 0');
 
 const brandRow = db.prepare('SELECT id FROM brand WHERE id = 1').get();
 if (!brandRow) {

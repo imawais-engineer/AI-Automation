@@ -54,8 +54,16 @@ Two shorts ship complete end to end, both silent 45 second verticals:
     full decode pass whose frame count matches the timeline, a **bitrate floor**
     (0.55 Mbit/s at 1080×1920, 2.2 Mbit/s at 4K), and five sampled frames
     (6 % / 28 % / 50 % / 74 % / 94 %) that are neither blank nor a repeated still.
-11. Only then mark the job `done`; anything else is a failed job with the failing
+11. Inspect the plan (`server/anim/inspect.ts`) before encoding and again for the report:
+    text containment, text-to-object and label-to-label collisions, pointer-to-target
+    alignment, and the algorithm state each scene shows. A failure refuses the render.
+12. Only then mark the job `done`; anything else is a failed job with the failing
     check, a readable log and a retry button.
+
+The voice-over script is a separate artifact (`server/voiceover.ts`): generated from the
+same plan, timestamped per scene, checked for alignment, pace and accuracy, and
+regenerated without a re-render. A script whose source hash no longer matches the lesson
+is reported as *outdated* and blocks "ready to publish" until it is regenerated.
 
 ## The animation engine (`server/anim/`)
 
@@ -67,9 +75,12 @@ algorithm's state changed, not because a new scene arrived.
 | --- | --- |
 | `easing.ts` | Pure time functions: cubic/quint easing, settle, bump, envelope |
 | `plan.ts` | Builds the plan: beat windows, stack block lifetimes, binary step windows |
-| `stage.ts` | Visual language: backdrop, floor grid, 2.5D blocks, pointers, overlays, brand end |
-| `stack.ts` | Stack stage: arriving/leaving blocks, TOP pointer, LIFO demo, underflow inset |
-| `binary.ts` | Binary stage: array row, range bracket, LOW/HIGH/MID markers, discarded half |
+| `stage.ts` | Visual language: backdrop, floor grid, 2.5D blocks, overlay bands, brand end |
+| `anchors.ts` | Anchor map + label placement: chips attach to rendered bounds, never to fixed coordinates |
+| `audit.ts` | Layout recorder: text, object and pointer geometry for the inspection pass |
+| `inspect.ts` | Scene inspection: containment, collisions, pointer alignment, algorithm state |
+| `stack.ts` | Stack stage: arriving/leaving blocks, anchored TOP pointer, LIFO demo, underflow inset |
+| `binary.ts` | Binary stage: array row, range bracket, anchored LOW/HIGH/MID markers, discarded half |
 | `index.ts` | `planFor()` and `drawMoment()` — the only render entry point |
 
 Visual rules the engine follows:
@@ -81,8 +92,17 @@ Visual rules the engine follows:
   the index the comparison actually used.
 - Text is restrained to a label system: operation banner, TOP pointer, value badges,
   range/marker chips, one caption line. Nothing is a paragraph on a slide.
+- Every pointer is **anchored**: the TOP chip is attached to the rendered bounds of the
+  block that is currently on top, and LOW/HIGH/MID are laid out as one row whose stems
+  land on the index they name. Positions are recomputed from the block transform each
+  frame, so a moving, settling or re-framed object takes its pointer with it. A label
+  chip is placed in the first free slot around the anchor; when an anchor cannot be
+  resolved the pointer is skipped and the scene is reported as failing inspection.
+- Overlays live in frame bands (`BAND` in `stage.ts`): header, kicker chips, operation
+  banner, hook headline, result card, caption strip, progress bar. Two overlays cannot
+  collide because no band overlaps another.
 - There is **no audio track at all** — `-an` on the encoder and a quality check that the
-  file has no audio stream.
+  file has no audio stream. The narration exists as a **voice-over script**, not audio.
 
 ## Render lifecycle and the quality gate
 
@@ -117,6 +137,8 @@ checklist as explicit human-review items instead of being reported as passed.
 | `PATCH /api/lessons/:id/scenes` | Edit stored scene durations and captions, and/or reorder (`order: [ids]`) |
 | `POST /api/lessons/:id/scenes/:sceneId/duplicate` | Duplicate a scene after itself |
 | `GET /api/lessons/:id/scene/:i.png?w=540` | Real rendered frame from the beat (360–1080px) |
+| `GET /api/lessons/:id/inspect` | Layout, pointer and algorithm-state inspection of the storyboard |
+| `GET/POST/PATCH /api/lessons/:id/voiceover` | Read, generate and edit the timestamped voice-over script |
 | `GET /api/lessons/:id/scene/:i/clip.mp4` | Motion preview of one scene (cached encode) |
 | `GET/PATCH /api/brand` | Brand template read by the renderer |
 | `POST /api/renders`, `GET /api/renders/:id` | Render jobs, progress, logs, errors, validation report |
@@ -185,13 +207,24 @@ Output profiles (`server/render/profiles.ts`), all vertical 9:16 at 30 fps:
 export frames are identical and a re-render is deterministic. The camera follows the
 tower as it grows, blocks settle with a small squash on landing, the TOP pointer travels
 to the real top element, and every overlay fades with an envelope instead of cutting.
-All text is measured and wrapped inside the 64px safe margin at 1080 width; the smallest
-overlay type is 22px at that scale, which stays legible on a phone.
+All text is laid out by `server/render/layout.ts`: a string is fitted into a named box,
+shrinking until it wraps inside both the width and the height, with balanced line breaks.
+A string that cannot fit even at the minimum size is cut with an ellipsis and the cut is
+recorded, so it shows up in inspection instead of silently running off the frame.
+
+## Typography
+
+Three roles, bundled with the app in `public/fonts/` (SIL OFL 1.1, licence texts
+alongside): **Space Grotesk** 600/700 for headlines and hooks, **Inter** 400–600 for
+explanation and labels, **JetBrains Mono** 400/600 for code, indices and algorithm state.
+The browser loads the same files through `@font-face`, so the editor preview and the
+export share one system.
 
 Frames are drawn with Skia (`@napi-rs/canvas`), which draws **no text at all** when the
-machine has no fonts — the slim Node image has none. The app therefore registers the
-bundled `dejavu-fonts-ttf` faces at boot (`server/render/typography.ts`); no system
-font package is needed.
+machine has no fonts — the slim Node image has none. `server/render/typography.ts`
+registers each bundled weight under its own family alias at import time, so a `700`
+request can never be answered with a `400` face, and `assertFontsLoaded()` stops the
+server if a face is missing: substituting a typeface would break every fitted box.
 
 ## Rendering adapters
 
@@ -206,13 +239,15 @@ MP4 or a failed job with an error.
 ```bash
 npm install
 npm run dev        # http://localhost:3000
-npm test           # traces, storyboard timing, frame maths, output quality, pipeline
+npm test           # traces, storyboard timing, layout fitting, voice-over, output quality, pipeline
 npm run typecheck
 ```
 
 Test files cover the trusted algorithms (`server/algorithms/*.test.ts`), storyboard
 construction and lesson validation (`server/scenes.test.ts`), frame allocation and
-profiles (`server/render/profiles.test.ts`), the file-level quality checks
+profiles (`server/render/profiles.test.ts`), text fitting and anchor placement
+(`server/render/layout.test.ts`), voice-over generation and its checks
+(`server/voiceover.test.ts`), the file-level quality checks
 (`server/render/quality.test.ts`) and the stage derivation (`server/pipeline.test.ts`).
 
 Environment variables: `PORT` (3000), `DATA_DIR` (SQLite), `MEDIA_DIR` (MP4 output).

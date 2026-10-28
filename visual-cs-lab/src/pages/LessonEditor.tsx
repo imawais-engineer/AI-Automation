@@ -10,11 +10,13 @@ import {
   type Pipeline,
   type PublishJob,
   type RenderJob,
-  type Scene
+  type Scene,
+  type VoiceoverStatus
 } from '../api';
 import PipelineStrip from '../components/PipelineStrip';
 import RenderQuality from '../components/RenderQuality';
 import SceneTimeline from '../components/SceneTimeline';
+import VoiceoverPanel from '../components/VoiceoverPanel';
 
 type Detail = {
   lesson: Lesson;
@@ -23,6 +25,7 @@ type Detail = {
   scenes: Scene[];
   renders: RenderJob[];
   publishes: PublishJob[];
+  voiceover: VoiceoverStatus;
   pipeline: Pipeline;
 };
 
@@ -69,6 +72,7 @@ export default function LessonEditor() {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [sceneDrafts, setSceneDrafts] = useState<Record<string, SceneDraft>>({});
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
+  const [voiceover, setVoiceover] = useState<VoiceoverStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -79,6 +83,7 @@ export default function LessonEditor() {
       setRenders(data.renders);
       setIssues(data.issues);
       setPipeline(data.pipeline);
+      setVoiceover(data.voiceover ?? null);
       setDraft({
         title: data.lesson.title,
         audience: data.lesson.audience,
@@ -297,6 +302,12 @@ export default function LessonEditor() {
           </p>
         </div>
         <div className="row">
+          <button
+            className="btn"
+            onClick={() => document.getElementById('voiceover')?.scrollIntoView({ behavior: 'smooth' })}
+          >
+            Voice-over Script
+          </button>
           <button className="btn" onClick={generateStoryboard} disabled={busy}>
             {scenes.length ? 'Rebuild storyboard' : 'Generate storyboard'}
           </button>
@@ -499,6 +510,18 @@ export default function LessonEditor() {
           </div>
         </aside>
       </div>
+
+      <section className="card" id="voiceover">
+        <div className="row" style={{ justifyContent: 'space-between' }}>
+          <h2>Voice-over Script</h2>
+          <span className="badge">silent video · text script</span>
+        </div>
+        <VoiceoverPanel
+          lessonId={id as string}
+          initial={voiceover}
+          onStatus={(status) => setVoiceover(status)}
+        />
+      </section>
 
       <section className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>

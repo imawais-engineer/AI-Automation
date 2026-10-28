@@ -65,6 +65,16 @@ const validation = JSON.stringify({
   validatedAt: '2026-10-27T00:00:00.000Z'
 });
 
+const SCRIPT_OK = {
+  present: true,
+  outdated: false,
+  ok: true,
+  checks: [
+    { id: 'voiceover_alignment', label: 'Narration matches the scene timeline', ok: true, detail: 'aligned' },
+    { id: 'voiceover_accuracy', label: 'Narration only states verified results', ok: true, detail: 'verified' }
+  ]
+};
+
 function render(overrides: Partial<RenderRef> = {}): RenderRef {
   return {
     id: 'job-1',
@@ -115,7 +125,8 @@ test('a quality-checked render is ready once a human approves it', () => {
     concept: CONCEPT,
     scenes,
     issues,
-    renders: [render()]
+    renders: [render()],
+    voiceover: SCRIPT_OK
   });
   assert.equal(checked.stage, 'quality_checked');
   assert.equal(checked.readyToPublish, false, 'approval is still required');
@@ -125,7 +136,8 @@ test('a quality-checked render is ready once a human approves it', () => {
     concept: CONCEPT,
     scenes,
     issues,
-    renders: [render()]
+    renders: [render()],
+    voiceover: SCRIPT_OK
   });
   assert.equal(approved.stage, 'ready_to_publish');
   assert.equal(approved.readyToPublish, true);
@@ -143,6 +155,38 @@ test('a render that failed its checks never marks the lesson ready', () => {
   });
   assert.equal(pipeline.readyToPublish, false);
   assert.equal(pipeline.stage, 'rendered');
+});
+
+test('a finished, approved render without a voice-over script is not publishable', () => {
+  const pipeline = lessonPipeline({
+    lesson: { ...withScenes(scenes), review_status: 'approved' },
+    concept: CONCEPT,
+    scenes,
+    issues,
+    renders: [render()],
+    voiceover: {
+      present: false,
+      outdated: false,
+      ok: false,
+      checks: [{ id: 'voiceover_missing', label: 'Voice-over script exists', ok: false, detail: 'missing' }]
+    }
+  });
+  assert.equal(pipeline.readyToPublish, false);
+  assert.equal(pipeline.checklist.find((item) => item.key === 'voiceover')?.ok, false);
+  assert.equal(pipeline.checklist.find((item) => item.key === 'narration')?.ok, false);
+});
+
+test('an outdated voice-over script blocks publishing', () => {
+  const pipeline = lessonPipeline({
+    lesson: { ...withScenes(scenes), review_status: 'approved' },
+    concept: CONCEPT,
+    scenes,
+    issues,
+    renders: [render()],
+    voiceover: { ...SCRIPT_OK, outdated: true, ok: false }
+  });
+  assert.equal(pipeline.readyToPublish, false);
+  assert.match(String(pipeline.checklist.find((item) => item.key === 'voiceover')?.detail), /out of date/i);
 });
 
 test('an unverified concept stays in draft', () => {

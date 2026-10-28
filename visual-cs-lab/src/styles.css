@@ -1,3 +1,47 @@
+/* The same faces the video renders with, so the editor previews the real type. */
+@font-face {
+  font-family: 'Space Grotesk';
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-600.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-700.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter-400.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/inter-500.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter-600.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-400.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-600.ttf') format('truetype');
+}
+
 :root {
   color-scheme: dark;
   --bg: #14161d;
@@ -14,7 +58,8 @@
   --warn: #fbbf24;
   --bad: #f87171;
   --radius: 14px;
-  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --display: 'Space Grotesk', Inter, system-ui, sans-serif;
 }
 
 * {
@@ -46,6 +91,7 @@ h1,
 h2,
 h3 {
   margin: 0;
+  font-family: var(--display);
   letter-spacing: -0.01em;
 }
 
