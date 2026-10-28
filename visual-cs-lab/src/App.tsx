@@ -1,6 +1,8 @@
 import { NavLink, Route, Routes } from 'react-router-dom';
 
 import Dashboard from './pages/Dashboard';
+import Create from './pages/Create';
+import Videos from './pages/Videos';
 import Concepts from './pages/Concepts';
 import ConceptDetail from './pages/ConceptDetail';
 import Lessons from './pages/Lessons';
@@ -10,12 +12,17 @@ import Renders from './pages/Renders';
 import Publishing from './pages/Publishing';
 
 const NAV = [
-  { to: '/', label: 'Dashboard', end: true },
-  { to: '/concepts', label: 'Concept library' },
+  { to: '/', label: 'Create', end: true },
+  { to: '/videos', label: 'Videos' },
+  { to: '/style', label: 'Style' }
+];
+
+const LIBRARY = [
+  { to: '/overview', label: 'Overview' },
   { to: '/lessons', label: 'Lessons' },
-  { to: '/renders', label: 'Render & export' },
-  { to: '/publishing', label: 'Publishing queue' },
-  { to: '/brand', label: 'Brand & templates' }
+  { to: '/concepts', label: 'Concept library' },
+  { to: '/renders', label: 'Render manager' },
+  { to: '/publishing', label: 'Publishing queue' }
 ];
 
 export default function App() {
@@ -40,6 +47,17 @@ export default function App() {
           ))}
         </nav>
 
+        <div className="nav" style={{ marginTop: 18 }}>
+          <div className="mono" style={{ fontSize: 10.5, color: 'var(--muted)', padding: '0 12px 6px' }}>
+            LIBRARY
+          </div>
+          {LIBRARY.map((item) => (
+            <NavLink key={item.to} to={item.to}>
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
+
         <div className="foot">
           <span className="mono">renderer</span>
           <span>canvas → H.264 MP4 (local worker)</span>
@@ -51,7 +69,10 @@ export default function App() {
 
       <main className="main">
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Create />} />
+          <Route path="/videos" element={<Videos />} />
+          <Route path="/style" element={<BrandPage />} />
+          <Route path="/overview" element={<Dashboard />} />
           <Route path="/concepts" element={<Concepts />} />
           <Route path="/concepts/:id" element={<ConceptDetail />} />
           <Route path="/lessons" element={<Lessons />} />

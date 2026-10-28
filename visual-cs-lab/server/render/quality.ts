@@ -185,6 +185,22 @@ export function assessRender(input: ValidationInput): RenderValidation {
 
   const expectedSeconds = expectedFrames / profile.fps;
   const tolerance = durationToleranceSeconds(profile.fps);
+
+  // A file can have the right duration and resolution while carrying almost no
+  // image data: a 20s 4K clip at 0.36 MB is ~0.14 Mbit/s and visibly mushy. The
+  // floor scales with the pixel count so 4K is held to a higher bar than HD.
+  const bitrateMbps = expectedSeconds > 0 ? (bytes * 8) / expectedSeconds / 1e6 : 0;
+  const pixelRatio = (profile.width * profile.height) / (1080 * 1920);
+  // Flat motion graphics compress well, but a file this far under the floor is
+  // mush rather than stylised: HD needs 0.55 Mbit/s, 4K 2.2 Mbit/s.
+  const minMbps = Math.max(0.2, pixelRatio * 0.55);
+  push(
+    'bitrate',
+    `Bitrate ≥ ${minMbps.toFixed(1)} Mbit/s`,
+    bitrateMbps >= minMbps,
+    `${bitrateMbps.toFixed(2)} Mbit/s in ${(bytes / MB).toFixed(2)} MB over ${expectedSeconds.toFixed(1)}s`
+  );
+
   push(
     'duration',
     `Duration ${expectedSeconds.toFixed(2)}s ±1 frame`,

@@ -1,20 +1,28 @@
 # Visual CS Lab
 
 Code-driven educational shorts: a Computer Science concept becomes a **verified
-algorithm trace**, the trace becomes a **structured storyboard**, and the storyboard
-is drawn frame by frame into a **branded vertical MP4**.
+algorithm trace**, the trace becomes a **continuous animation timeline**, and that
+timeline is drawn frame by frame into a **branded, silent vertical MP4**.
 
-Two vertical slices are complete end to end, each from concept to downloaded file:
+The product is deliberately small: **Create → Videos → Style**. Create verifies an
+input with the trusted implementation, generates the animation and offers a preview
+render; Videos previews, exports and downloads finished MP4s; Style owns the brand
+palette and typography. Library routes (concepts, lessons, render manager, publishing
+queue) stay available behind the navigation's Library group.
 
-- **Stacks** — step through PUSH/POP, verify LIFO, build a lesson, render H.264.
-- **Binary Search** — trace low/high/mid over a sorted array, verify the index, build
-  the fixed five-scene 20 second storyboard, render and download the MP4.
+Two shorts ship complete end to end, both silent 45 second verticals:
+
+- **Stacks** — PUSH 10, 20, 30 · PEEK · POP · POP · PUSH 40, watched as one continuous
+  tower with a moving TOP pointer and a labelled underflow example.
+- **Binary Search** — `[1, 3, 5, 7, 9]` and target `7`, with LOW/HIGH/MID, the active
+  range and the discarded half driven by the verified trace.
 
 ## Stack
 
 | Layer | Choice | Why |
 | --- | --- | --- |
 | UI | React 18 + TypeScript + Vite | Component-driven pages, one dev server with HMR |
+| Motion | `server/anim/` — a deterministic 2.5D engine on Skia | One plan, one renderer for preview and export |
 | API | Express, mounted with Vite in middleware mode | One origin on port 3000: no CORS, API and video downloads share the session |
 | Data | SQLite (`better-sqlite3`) at `DATA_DIR` | Concepts, lessons, storyboards, render jobs, publishing entries persist across restarts |
 | Frames | `@napi-rs/canvas` (Skia) | Real 2160×3840 drawing with no headless Chromium download |
@@ -22,30 +30,59 @@ Two vertical slices are complete end to end, each from concept to downloaded fil
 
 ## Pipeline (matches the product spec)
 
-1. Load the lesson and its concept.
+1. Load the lesson and its concept. A lesson may carry its own animation input
+   (`animation_input`), which overrides the concept's demo configuration.
 2. Validate the lesson (`lessonIssues` in `server/scenes.ts`): hook, takeaway, duration,
-   animation configuration, verified trace, expected result, stored storyboard, timings
-   and the lesson/concept reference.
+   animation configuration, verified trace, expected result, stored storyboard, timings,
+   one operation beat per verified event, and the lesson/concept reference.
 3. Run the concept's **trusted** animation configuration — `kind: 'stack'` uses
    `server/algorithms/stack.ts`, `kind: 'binary-search'` uses
    `server/algorithms/binary-search.ts`.
 4. Emit a trace: stack events (`push`/`pop`/`top`) or binary search steps
    (`low`/`high`/`mid`/comparison/eliminated range).
 5. Validate the trace against the concept's expected results — a mismatch blocks rendering.
-6. Build scenes (`server/scenes.ts`): hook, concept, implementation, one scene per event,
-   complexity, summary, brand. Binary Search uses its own five-scene plan.
-7. Snapshot the stored storyboard into the job, so the MP4 always matches the
-   scenes that were validated at enqueue time.
-8. Render frames (`server/render/draw.ts`) from that snapshot, allocating frames per
-   scene with largest-remainder maths: a 20 s lesson at 30 fps is exactly 600
-   frames, never 599 or 601.
+6. Build the beat list (`server/scenes.ts`): hook, setup, one beat per verified
+   operation, LIFO takeaway, complexity, brand — 45 seconds of weights for the demos.
+7. Build the **motion plan** (`server/anim/plan.ts`) from the stored beat durations plus
+   the freshly verified trace: every block, marker and camera key is positioned in time.
+8. Render frames from that plan, one canvas reused, each frame written once the
+   previous write has drained. The same `drawMoment()` produces the preview, the
+   storyboard stills and the exported master — there is no slideshow renderer.
 9. Encode and stream to ffmpeg (H.264, `yuv420p`, `+faststart`, no audio track).
 10. Validate the encoded file (`server/render/quality.ts`): MP4 container, H.264,
-    yuv420p, even dimensions, exact resolution, duration within one frame, a full
-    decode pass whose frame count matches the timeline, and three sampled frames
-    (10 % / 50 % / 90 %) that are neither blank nor a repeated still.
+    yuv420p, even dimensions, exact resolution, silence, duration within one frame, a
+    full decode pass whose frame count matches the timeline, a **bitrate floor**
+    (0.55 Mbit/s at 1080×1920, 2.2 Mbit/s at 4K), and five sampled frames
+    (6 % / 28 % / 50 % / 74 % / 94 %) that are neither blank nor a repeated still.
 11. Only then mark the job `done`; anything else is a failed job with the failing
     check, a readable log and a retry button.
+
+## The animation engine (`server/anim/`)
+
+One continuous stage per video. The camera pushes and drifts, but the environment never
+cuts away between operations: blocks, markers and the TOP pointer move because the
+algorithm's state changed, not because a new scene arrived.
+
+| Module | Responsibility |
+| --- | --- |
+| `easing.ts` | Pure time functions: cubic/quint easing, settle, bump, envelope |
+| `plan.ts` | Builds the plan: beat windows, stack block lifetimes, binary step windows |
+| `stage.ts` | Visual language: backdrop, floor grid, 2.5D blocks, pointers, overlays, brand end |
+| `stack.ts` | Stack stage: arriving/leaving blocks, TOP pointer, LIFO demo, underflow inset |
+| `binary.ts` | Binary stage: array row, range bracket, LOW/HIGH/MID markers, discarded half |
+| `index.ts` | `planFor()` and `drawMoment()` — the only render entry point |
+
+Visual rules the engine follows:
+
+- Blocks are solids with a lit top plane, a vertical front gradient, a shadow side and a
+  contact shadow; light comes from above and the camera parallax matches the floor grid.
+- Motion is driven by verified values: a PUSH drops a block into slot
+  `items.length - 1`, a POP lifts the block the trace says was removed, MID travels to
+  the index the comparison actually used.
+- Text is restrained to a label system: operation banner, TOP pointer, value badges,
+  range/marker chips, one caption line. Nothing is a paragraph on a slide.
+- There is **no audio track at all** — `-an` on the encoder and a quality check that the
+  file has no audio stream.
 
 ## Render lifecycle and the quality gate
 
@@ -70,6 +107,8 @@ checklist as explicit human-review items instead of being reported as passed.
 | Route | Purpose |
 | --- | --- |
 | `GET /api/health` | Readiness probe |
+| `GET /api/algorithms` | Algorithms the Create screen can animate, with default inputs |
+| `POST /api/create` | Verify an input, create the lesson, store its beats, report readiness |
 | `GET /api/overview` | Dashboard counts, recent lessons and jobs |
 | `GET/POST /api/concepts`, `GET/PATCH /api/concepts/:id` | Concept library |
 | `POST /api/concepts/:id/trace` | Run the trusted trace (visualizer + validation) |
@@ -77,7 +116,7 @@ checklist as explicit human-review items instead of being reported as passed.
 | `POST /api/lessons/:id/storyboard` | Build and store scenes from the verified trace |
 | `PATCH /api/lessons/:id/scenes` | Edit stored scene durations and captions, and/or reorder (`order: [ids]`) |
 | `POST /api/lessons/:id/scenes/:sceneId/duplicate` | Duplicate a scene after itself |
-| `GET /api/lessons/:id/scene/:i.png` | Real rendered storyboard frame |
+| `GET /api/lessons/:id/scene/:i.png?w=540` | Real rendered frame from the beat (360–1080px) |
 | `GET /api/lessons/:id/scene/:i/clip.mp4` | Motion preview of one scene (cached encode) |
 | `GET/PATCH /api/brand` | Brand template read by the renderer |
 | `POST /api/renders`, `GET /api/renders/:id` | Render jobs, progress, logs, errors, validation report |
@@ -107,25 +146,25 @@ instead of being traced. `binary-search.test.ts` covers the example (index 3 aft
 comparisons), empty arrays, a target below the minimum, above the maximum, missing from
 the middle, a single-element array, duplicates, unsorted input and wrong expectations.
 
-`buildScenes` gives a 20 second binary search lesson exactly five scenes and exactly
-20000 ms:
+`buildScenes` gives a 45 second binary search short exactly five beats and exactly
+45000 ms (1350 frames at 30 fps):
 
-| # | Scene | Duration | Content |
+| # | Beat | Duration | Content |
 | --- | --- | --- | --- |
-| 1 | Hook | 2.5 s | "Searching a sorted array? Check the middle first." |
-| 2 | Concept | 3.5 s | The sorted array and target 7, with the sorted-input precondition |
-| 3 | Trace | 7.0 s | low/high/mid, the comparison with 5, range reduction, the match at index 3 |
-| 4 | Complexity | 4.0 s | O(log n) time, O(1) auxiliary space, key takeaway |
-| 5 | Brand | 3.0 s | Visual CS Lab and "Understand the algorithm. Don't just memorize it." |
+| 1 | Hook | 3.0 s | "Searching a sorted array? Check the middle first." |
+| 2 | Setup | 5.0 s | The sorted array and target 7, with the sorted-input precondition |
+| 3 | Trace | 27.5 s | Array settles, MID moves to 2, `5 < 7`, indices 0–1 discarded, LOW → 3, range contracts, MID → 3, `FOUND · INDEX 3`, then the halving demonstration |
+| 4 | Complexity | 7.0 s | O(log n) time, O(1) auxiliary space, n → n/2 bars |
+| 5 | Brand | 2.5 s | Visual CS Lab and "Understand the algorithm. Don't just memorize it." |
 
-Durations use largest-remainder allocation, so any lesson length adds up exactly to the
-lesson duration. Scene timings and captions can be edited in the lesson editor
-(`PATCH /api/lessons/:id/scenes`); the renderer draws the **stored** storyboard, and
+Beat durations use largest-remainder allocation, so any lesson length adds up exactly to
+the lesson duration. Beat timings and captions can be edited in the lesson editor
+(`PATCH /api/lessons/:id/scenes`); the plan is rebuilt from the **stored** beats, and
 validation reports when the timings no longer match the lesson duration.
 
-The trace scene animates inside a single scene: every verified step gets an equal
-slice, showing the comparison and pointers first, then fading the eliminated half and
-moving `low`/`high`.
+Inside the trace beat the verified steps split their window into an intro, one share per
+comparison and a closing halving share. The markers, the range bracket and the discarded
+half are read from `binaryStateAt(plan, t)`, so what you see is the trace's own state.
 
 ## Editor, motion and output profiles
 
@@ -142,12 +181,12 @@ Output profiles (`server/render/profiles.ts`), all vertical 9:16 at 30 fps:
 | HD | 1080 × 1920 | Default publication output |
 | 4K | 2160 × 3840 | Optional master; slow, more memory |
 
-Motion comes from scene time only (`drawFrame` is a pure function of scene, frame time
-and brand), so a re-render is deterministic: content fades and rises in, the accent rule
-under a hook grows, code lines stagger, complexity facts slide in as cards, the match
-pulses, the brand mark and underline sweep, and captions slide up. Each scene fades out
-over its last 200 ms so transitions never hide an algorithm state. Long status text in
-the trace panel is measured and shrunk/wrapped inside the safe margin.
+`drawMoment(plan, t)` is a pure function of the plan and the timestamp, so preview and
+export frames are identical and a re-render is deterministic. The camera follows the
+tower as it grows, blocks settle with a small squash on landing, the TOP pointer travels
+to the real top element, and every overlay fades with an envelope instead of cutting.
+All text is measured and wrapped inside the 64px safe margin at 1080 width; the smallest
+overlay type is 22px at that scale, which stays legible on a phone.
 
 Frames are drawn with Skia (`@napi-rs/canvas`), which draws **no text at all** when the
 machine has no fonts — the slim Node image has none. The app therefore registers the

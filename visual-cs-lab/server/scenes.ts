@@ -68,6 +68,8 @@ export type LessonInput = {
   sources: string;
   /** Human review state: draft, in_review or approved. */
   review_status?: string;
+  /** Per-lesson animation input (JSON), overriding the concept's demo config. */
+  animation_input?: string;
   /** Stored storyboard, JSON encoded. */
   scenes: string;
 };
@@ -120,6 +122,16 @@ export function safeJson<T>(raw: string, fallback: T): T {
 
 export function readAnimationConfig(concept: ConceptInput): Record<string, unknown> {
   return safeJson<Record<string, unknown>>(concept.animation_config, {});
+}
+
+/**
+ * The input a lesson actually animates: the lesson's own configuration when the
+ * Create screen set one, otherwise the concept's verified demo configuration.
+ */
+export function effectiveConcept(lesson: LessonInput, concept: ConceptInput): ConceptInput {
+  const input = String(lesson.animation_input || '').trim();
+  if (!input) return concept;
+  return { ...concept, animation_config: input };
 }
 
 /** Runs the concept's trusted animation configuration, if it has one. */
@@ -219,18 +231,20 @@ function toScenes(specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs
   return specs.map((spec, index) => ({ ...spec.scene, id: `s${index + 1}`, durationMs: durations[index] }));
 }
 
-const CODE_LINE_LIMIT = 16;
-
-function codeLines(concept: ConceptInput): string[] {
-  const source = (concept.reference_code || concept.pseudocode || '').split('\n');
-  return source.slice(0, CODE_LINE_LIMIT).map((line) => line.replace(/\t/g, '  ').slice(0, 46));
-}
+/**
+ * Beat weights for a stack short, in seconds of a 45 second video:
+ * 3.2 hook · 1.8 setup · 4.2 per verified operation · 3.6 LIFO · 5.0 complexity
+ * (which also carries the labelled underflow example) · 2.0 brand.
+ *
+ * These are beat durations on one continuous animation, not separate slides.
+ */
+const STACK_BEAT_SECONDS = { hook: 3.2, setup: 1.8, op: 4.2, lifo: 3.6, complexity: 5.0, brand: 2.0 };
 
 function buildStackScenes(lesson: LessonInput, concept: ConceptInput, run: ConceptRun, totalMs: number): Scene[] {
   const events = run.events;
   const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
     {
-      weight: 1,
+      weight: STACK_BEAT_SECONDS.hook,
       scene: {
         type: 'hook',
         title: lesson.hook || `${concept.name}: the idea in one line`,
@@ -239,7 +253,7 @@ function buildStackScenes(lesson: LessonInput, concept: ConceptInput, run: Conce
       }
     },
     {
-      weight: 1.2,
+      weight: STACK_BEAT_SECONDS.setup,
       scene: {
         type: 'concept',
         title: concept.name,
@@ -249,22 +263,9 @@ function buildStackScenes(lesson: LessonInput, concept: ConceptInput, run: Conce
     }
   ];
 
-  if (concept.reference_code.trim()) {
-    specs.push({
-      weight: 1.3,
-      scene: {
-        type: 'code',
-        title: `${concept.name} — reference implementation`,
-        subtitle: concept.reference_language ? concept.reference_language.toUpperCase() : '',
-        caption: 'Read the implementation, then watch the trace below.',
-        code: { language: concept.reference_language || 'text', lines: codeLines(concept), highlight: -1 }
-      }
-    });
-  }
-
   events.forEach((event, index) => {
     specs.push({
-      weight: 1,
+      weight: STACK_BEAT_SECONDS.op,
       scene: {
         type: 'execution',
         title: event.op === 'push' ? `PUSH(${event.value})` : event.op.toUpperCase(),
@@ -286,12 +287,21 @@ function buildStackScenes(lesson: LessonInput, concept: ConceptInput, run: Conce
 
   specs.push(
     {
-      weight: 0.9,
+      weight: STACK_BEAT_SECONDS.lifo,
+      scene: {
+        type: 'summary',
+        title: lesson.key_takeaway || 'LIFO: the last value in is the first value out',
+        subtitle: concept.example_input ? `Input: ${concept.example_input}` : '',
+        caption: lesson.cta || lesson.key_takeaway
+      }
+    },
+    {
+      weight: STACK_BEAT_SECONDS.complexity,
       scene: {
         type: 'complexity',
         title: 'Complexity',
         subtitle: concept.complexity_time,
-        caption: `${concept.complexity_time}. Space: ${concept.complexity_space}.`,
+        caption: `${concept.complexity_time}. Space: ${concept.complexity_space}. Underflow: popping an empty stack returns EMPTY.`,
         facts: [
           { label: 'Auxiliary space', value: concept.complexity_space || 'O(1)' },
           { label: 'Rule', value: 'Only the top element is touched.' }
@@ -299,17 +309,8 @@ function buildStackScenes(lesson: LessonInput, concept: ConceptInput, run: Conce
       }
     },
     {
-      weight: 1.1,
-      scene: {
-        type: 'summary',
-        title: lesson.key_takeaway || concept.summary,
-        subtitle: concept.example_input ? `Input: ${concept.example_input}` : '',
-        caption: lesson.cta || lesson.key_takeaway
-      }
-    },
-    {
-      weight: 0.6,
-      scene: { type: 'brand', title: 'Visual CS Lab', subtitle: 'Concept → verified trace → short', caption: '' }
+      weight: STACK_BEAT_SECONDS.brand,
+      scene: { type: 'brand', title: 'Visual CS Lab', subtitle: 'Code-driven CS animation', caption: '' }
     }
   );
 
@@ -336,9 +337,11 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
     steps: []
   };
 
+  // Beat weights, in seconds of a 45 second video: hook 3 · sorted setup 5 ·
+  // verified trace 27.5 · halving/complexity 7 · brand 2.5.
   const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
     {
-      weight: 2.5,
+      weight: 3,
       scene: {
         type: 'hook',
         title: lesson.hook || 'Searching a sorted array? Check the middle first.',
@@ -347,7 +350,7 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
       }
     },
     {
-      weight: 3.5,
+      weight: 5,
       scene: {
         type: 'concept',
         title: `Sorted array · target ${target}`,
@@ -357,19 +360,17 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
       }
     },
     {
-      weight: 7,
+      weight: 27.5,
       scene: {
         type: 'trace',
         title: `Trace · target ${target}`,
         subtitle: 'low, high and mid · mid = floor((low + high) / 2)',
-        // Short enough to read inside 7 seconds with the sound off; the panel
-        // already names the comparison and the bound that moves.
-        caption: 'Compare the midpoint · keep the half that can still hold the target.',
+        caption: `Compare the midpoint, then keep the half that can still hold ${target}.`,
         visual: { ...setup, mode: 'trace', steps: run.steps }
       }
     },
     {
-      weight: 4,
+      weight: 7,
       scene: {
         type: 'complexity',
         title: lesson.key_takeaway,
@@ -382,7 +383,7 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
       }
     },
     {
-      weight: 3,
+      weight: 2.5,
       scene: {
         type: 'brand',
         title: 'Visual CS Lab',
@@ -399,7 +400,8 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
  * Turns a lesson into the structured scene list the renderer draws. Every scene
  * carries its own duration, so the timeline is data, not code per video.
  */
-export function buildScenes(lesson: LessonInput, concept: ConceptInput): Scene[] {
+export function buildScenes(lesson: LessonInput, conceptRow: ConceptInput): Scene[] {
+  const concept = effectiveConcept(lesson, conceptRow);
   const totalMs = lessonDurationMs(lesson);
   const run = runConcept(concept);
   if (run.kind === 'binary-search' && run.supported) return buildBinarySearchScenes(lesson, concept, totalMs);
@@ -464,6 +466,21 @@ function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: Conce
     return [
       `The storyboard is missing its ${missing.join(', ')} scene${missing.length === 1 ? '' : 's'} — rebuild the storyboard.`
     ];
+  }
+
+  // The animation is continuous, but every verified operation still owns one
+  // beat window: a beat per event, exactly, and one trace beat for binary search.
+  const executionScenes = stored.filter((scene) => scene.type === 'execution');
+  if (run.kind === 'stack' && executionScenes.length !== run.events.length) {
+    issues.push(
+      `The storyboard has ${executionScenes.length} operation beats but the verified trace has ${run.events.length} operations — rebuild the storyboard.`
+    );
+  }
+  const traceScenes = stored.filter((scene) => scene.type === 'trace');
+  if (run.kind === 'binary-search' && traceScenes.length !== 1) {
+    issues.push(
+      `The storyboard needs exactly one trace beat but has ${traceScenes.length} — rebuild the storyboard.`
+    );
   }
 
   stored.forEach((scene, index) => {
@@ -547,8 +564,9 @@ export function lessonIssues(lesson: LessonInput, concept: ConceptInput): string
   const durationValid = Number.isFinite(seconds) && seconds >= 10 && seconds <= 60;
   if (!durationValid) issues.push('The lesson duration must be between 10 and 60 seconds.');
 
-  const config = readAnimationConfig(concept);
-  const run = runConcept(concept);
+  const effective = effectiveConcept(lesson, concept);
+  const config = readAnimationConfig(effective);
+  const run = runConcept(effective);
   if (!run.supported) {
     issues.push('This concept has no animation configuration yet, so no trace can be verified.');
     return Array.from(new Set(issues));
@@ -565,7 +583,7 @@ export function lessonIssues(lesson: LessonInput, concept: ConceptInput): string
     );
   }
 
-  if (durationValid) issues.push(...storyboardIssues(lesson, concept, run, seconds));
+  if (durationValid) issues.push(...storyboardIssues(lesson, effective, run, seconds));
 
   return Array.from(new Set(issues));
 }

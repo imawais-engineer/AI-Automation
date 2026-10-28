@@ -217,3 +217,23 @@ export function formatBytes(bytes: number): string {
   if (!bytes) return '—';
   return `${(bytes / 1048576).toFixed(2)} MB`;
 }
+
+export type AlgorithmInfo = {
+  slug: string;
+  kind: string;
+  name: string;
+  blurb: string;
+  defaultInput: { ops?: { op: string; value?: number }[]; array?: number[]; target?: number };
+  available: boolean;
+  complexity: string;
+  summary: string;
+};
+
+export type CreateResult = {
+  lesson: Lesson;
+  concept: Concept;
+  durationSeconds: number;
+  summary: string;
+  issues: string[];
+  renderable: boolean;
+};

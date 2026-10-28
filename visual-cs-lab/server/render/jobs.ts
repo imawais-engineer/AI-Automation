@@ -8,20 +8,15 @@ import ffmpegPath from 'ffmpeg-static';
 
 import { db, newId, nowIso, readBrand, type Brand } from '../db.ts';
 import {
+  effectiveConcept,
   lessonIssues,
   safeJson,
   type ConceptInput,
   type LessonInput,
   type Scene
 } from '../scenes.ts';
-import { drawFrame, totalDuration } from './draw.ts';
-import {
-  allocateFrames,
-  PROFILES,
-  totalFrames,
-  type OutputProfile,
-  type Preset
-} from './profiles.ts';
+import { drawMoment, planBrand, planFor, type MotionPlan } from '../anim/index.ts';
+import { PROFILES, totalFrames, type OutputProfile, type Preset } from './profiles.ts';
 import {
   assessRender,
   parseMediaInfo,
@@ -234,29 +229,34 @@ export function runFfmpeg(
   });
 }
 
-type EncodePlan = {
-  scene: Scene;
-  sceneIndex: number;
-  sceneTotal: number;
-  frames: number;
-};
+/** Total length of a beat list, in milliseconds. */
+export function totalDuration(scenes: Scene[]): number {
+  return scenes.reduce((sum, scene) => sum + (Number(scene.durationMs) || 0), 0);
+}
 
 /**
- * Draws every planned frame into ffmpeg's stdin and waits for the encode. Frames
- * are streamed one at a time — no full-resolution frame list is kept in memory —
- * and every write waits for the callback, so backpressure is respected.
+ * Draws every frame of the motion plan into ffmpeg's stdin and waits for the
+ * encode. One canvas is reused and each frame is written once the previous write
+ * has drained, so a 4K master never holds more than a single frame in memory.
+ *
+ * This is the same `drawMoment()` the preview uses: there is no separate
+ * slideshow path for export.
  */
-async function encodePlan(args: {
-  plan: EncodePlan[];
+async function encodeMoment(args: {
+  motion: MotionPlan;
   profile: OutputProfile;
-  brand: Brand;
   output: string;
+  /** Optional slice of the timeline, for scene previews. */
+  fromMs?: number;
+  toMs?: number;
   crf?: string;
   onProgress?: (framesWritten: number, total: number) => void;
   isCancelled?: () => boolean;
 }): Promise<{ ok: boolean; frames: number; error?: string }> {
-  const { plan, profile, brand, output } = args;
-  const total = plan.reduce((sum, item) => sum + item.frames, 0);
+  const { motion, profile, output } = args;
+  const fromMs = args.fromMs ?? 0;
+  const toMs = args.toMs ?? motion.durationMs;
+  const total = totalFrames(Math.max(1, toMs - fromMs), profile.fps);
 
   const encoder = spawn(
     ffmpegPath as string,
@@ -272,7 +272,9 @@ async function encodePlan(args: {
       '-an',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
-      '-crf', args.crf ?? (profile.height >= 2000 ? '22' : '20'),
+      // Gradient-heavy motion graphics lose detail fast at high CRF; the HD
+      // master uses 19 and 4K uses 21 (4K has four times the pixels).
+      '-crf', args.crf ?? (profile.height >= 2000 ? '21' : profile.height >= 1900 ? '19' : '21'),
       '-pix_fmt', 'yuv420p',
       '-profile:v', 'high',
       '-g', String(profile.fps * 2),
@@ -303,19 +305,17 @@ async function encodePlan(args: {
   let frameIndex = 0;
 
   try {
-    for (const item of plan) {
-      for (let i = 0; i < item.frames; i++) {
-        if (args.isCancelled?.()) throw new Error('cancelled');
-        const elapsed = (i / profile.fps) * 1000;
-        drawFrame(ctx, item.scene, item.sceneIndex, item.sceneTotal, elapsed, brand, {
-          width: profile.width,
-          height: profile.height
-        });
-        const image = ctx.getImageData(0, 0, profile.width, profile.height);
-        await write(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength));
-        frameIndex++;
-        if (frameIndex % 15 === 0) args.onProgress?.(frameIndex, total);
-      }
+    for (let i = 0; i < total; i++) {
+      if (args.isCancelled?.()) throw new Error('cancelled');
+      const tMs = fromMs + (i / profile.fps) * 1000;
+      drawMoment(ctx, motion, Math.min(tMs, motion.durationMs - 1), {
+        width: profile.width,
+        height: profile.height
+      });
+      const image = ctx.getImageData(0, 0, profile.width, profile.height);
+      await write(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength));
+      frameIndex++;
+      if (frameIndex % 15 === 0) args.onProgress?.(frameIndex, total);
     }
     encoder.stdin.end();
     const code = await exited;
@@ -341,19 +341,6 @@ async function encodePlan(args: {
     await exited.catch(() => 1);
     return { ok: false, frames: frameIndex, error: (error as Error).message };
   }
-}
-
-function framePlan(scenes: Scene[], profile: OutputProfile, offset = 0, total = scenes.length): EncodePlan[] {
-  const counts = allocateFrames(
-    scenes.map((scene) => scene.durationMs),
-    profile.fps
-  );
-  return scenes.map((scene, index) => ({
-    scene,
-    sceneIndex: offset + index,
-    sceneTotal: total,
-    frames: counts[index]
-  }));
 }
 
 function lastFrameCount(stdout: Buffer): number {
@@ -425,9 +412,11 @@ async function validateOutput(
   );
   const decodedFrames = decode.code === 0 ? lastFrameCount(decode.stdout) : 0;
 
+  // Five points across the short: beginning, two middle beats (where the
+  // algorithm actually changes state) and the ending.
   const expectedSeconds = job.expected_frames / profile.fps;
   const samples: FrameSample[] = [];
-  for (const fraction of [0.1, 0.5, 0.9]) {
+  for (const fraction of [0.06, 0.28, 0.5, 0.74, 0.94]) {
     const sample = await sampleFrame(output, Math.max(0, expectedSeconds * fraction));
     if (sample) samples.push(sample);
   }
@@ -465,21 +454,36 @@ async function renderJob(job: RenderJob): Promise<void> {
     return;
   }
   const profile = PROFILES[job.preset];
-  const plan = framePlan(scenes, profile);
-  const plannedFrames = plan.reduce((sum, item) => sum + item.frames, 0);
+  let motion: MotionPlan;
+  try {
+    // The plan is rebuilt from the snapshot's beat timings and the concept's
+    // trusted trace, so the file animates verified states only.
+    motion = planFor({
+      lesson: bundle.lesson,
+      concept: effectiveConcept(bundle.lesson, bundle.concept),
+      scenes,
+      brand: planBrand(brand)
+    });
+  } catch (error) {
+    setState(job.id, 'error', {
+      error: `The animation plan could not be built: ${(error as Error).message}`,
+      finished_at: nowIso()
+    });
+    return;
+  }
+  const plannedFrames = totalFrames(motion.durationMs, profile.fps);
   appendLog(
     job.id,
-    `${scenes.length} scenes, ${plannedFrames} frames at ${job.width}×${job.height} ${job.fps}fps (snapshot ${job.storyboard_hash.slice(0, 8)})`
+    `${scenes.length} beats, ${plannedFrames} frames (${(motion.durationMs / 1000).toFixed(2)}s) at ${job.width}×${job.height} ${job.fps}fps — ${motion.kind} motion (snapshot ${job.storyboard_hash.slice(0, 8)})`
   );
   if (stored.length > 0 && createHash('sha1').update(JSON.stringify(stored)).digest('hex') !== job.storyboard_hash) {
     appendLog(job.id, 'note: the lesson storyboard has been edited since this render was queued');
   }
 
   const output = path.join(MEDIA_DIR, `${job.id}.mp4`);
-  const result = await encodePlan({
-    plan,
+  const result = await encodeMoment({
+    motion,
     profile,
-    brand,
     output,
     onProgress: (written, total) => {
       const pct = Math.min(95, (written / Math.max(1, total)) * 95);
@@ -546,19 +550,34 @@ async function renderJob(job: RenderJob): Promise<void> {
   }
 }
 
-/** A single rendered frame, used for real storyboard thumbnails. */
+function motionFor(lessonId: string): MotionPlan | null {
+  const bundle = lessonBundle(lessonId);
+  if (!bundle) return null;
+  const scenes = safeJson<Scene[]>(bundle.lesson.scenes || '[]', []);
+  if (scenes.length === 0) return null;
+  try {
+    return planFor({
+      lesson: bundle.lesson,
+      concept: effectiveConcept(bundle.lesson, bundle.concept),
+      scenes,
+      brand: planBrand(readBrand() as Brand)
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** A frame from the middle of one beat, used for real storyboard thumbnails. */
 export function thumbnail(lessonId: string, sceneIndex: number, width = 540): Buffer | null {
-  const scenes = scenesFor(lessonId);
-  if (!scenes) return null;
-  const scene = scenes[sceneIndex];
-  if (!scene) return null;
+  const motion = motionFor(lessonId);
+  if (!motion) return null;
+  const beat = motion.beats[sceneIndex];
+  if (!beat) return null;
   const height = Math.round((width / 9) * 16);
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
-  drawFrame(ctx, scene, sceneIndex, scenes.length, scene.durationMs * 0.5, readBrand() as Brand, {
-    width,
-    height
-  });
+  const at = beat.startMs + (beat.endMs - beat.startMs) * 0.55;
+  drawMoment(ctx, motion, at, { width, height });
   return canvas.encodeSync('png');
 }
 
@@ -571,10 +590,10 @@ export async function sceneClip(
   sceneIndex: number,
   width = 540
 ): Promise<{ file?: string; error?: string }> {
-  const scenes = scenesFor(lessonId);
-  if (!scenes) return { error: 'Lesson not found.' };
-  const scene = scenes[sceneIndex];
-  if (!scene) return { error: 'Scene not found.' };
+  const motion = motionFor(lessonId);
+  if (!motion) return { error: 'This lesson has no animation to preview yet.' };
+  const beat = motion.beats[sceneIndex];
+  if (!beat) return { error: 'Scene not found.' };
   const brand = readBrand() as Brand;
   const profile: OutputProfile = {
     width,
@@ -584,19 +603,19 @@ export async function sceneClip(
     purpose: 'Scene preview'
   };
   const hash = createHash('sha1')
-    .update(JSON.stringify({ scene, brand: brand.updated_at, width, fps: profile.fps }))
+    .update(JSON.stringify({ beat, brand: brand.updated_at, width, fps: profile.fps, v: 2 }))
     .digest('hex')
     .slice(0, 20);
   const file = path.join(CLIP_DIR, `${hash}.mp4`);
   if (existsSync(file)) return { file };
 
   const tmp = path.join(CLIP_DIR, `${hash}.${process.pid}.tmp.mp4`);
-  const counts = allocateFrames([scene.durationMs], profile.fps);
-  const result = await encodePlan({
-    plan: [{ scene, sceneIndex, sceneTotal: scenes.length, frames: counts[0] }],
+  const result = await encodeMoment({
+    motion,
     profile,
-    brand,
     output: tmp,
+    fromMs: beat.startMs,
+    toMs: beat.endMs,
     crf: '23'
   });
   if (!result.ok) {

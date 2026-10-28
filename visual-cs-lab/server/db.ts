@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 
-import { buildScenes, type ConceptInput, type LessonInput } from './scenes.ts';
+import { buildScenes, runConcept, type ConceptInput, type LessonInput } from './scenes.ts';
 
 const DATA_DIR = process.env.DATA_DIR || '/tmp/visual-cs-lab';
 mkdirSync(DATA_DIR, { recursive: true });
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS lessons (
   title TEXT NOT NULL,
   audience TEXT NOT NULL DEFAULT '',
   objective TEXT NOT NULL DEFAULT '',
-  duration_seconds INTEGER NOT NULL DEFAULT 20,
+  duration_seconds INTEGER NOT NULL DEFAULT 45,
   hook TEXT NOT NULL DEFAULT '',
   narration TEXT NOT NULL DEFAULT '',
   on_screen_text TEXT NOT NULL DEFAULT '',
@@ -141,6 +141,8 @@ ensureColumn('render_jobs', 'expected_seconds', 'REAL NOT NULL DEFAULT 0');
 ensureColumn('render_jobs', 'storyboard_hash', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('render_jobs', 'snapshot', "TEXT NOT NULL DEFAULT '[]'");
 ensureColumn('render_jobs', 'validation', 'TEXT');
+/** Per-lesson animation input chosen on the Create screen. */
+ensureColumn('lessons', 'animation_input', "TEXT NOT NULL DEFAULT ''");
 
 const brandRow = db.prepare('SELECT id FROM brand WHERE id = 1').get();
 if (!brandRow) {
@@ -158,7 +160,7 @@ if (!brandRow) {
     'Visual CS Lab',
     JSON.stringify({ size: 46, contrast: 'high', background: 'rgba(3,8,18,.72)' }),
     JSON.stringify({ font: 'ui-monospace, SFMono-Regular, Menlo, monospace', size: 34 }),
-    20,
+    45,
     '1080x1920',
     '',
     '',
@@ -186,12 +188,22 @@ type SeedConcept = {
   related: string[];
 };
 
+/**
+ * The verified stack short: three pushes, a peek, two pops and a final push.
+ * Expected states are checked against the trusted implementation before any
+ * frame is drawn.
+ */
 const STACK_OPS = [
   { op: 'push', value: 10 },
   { op: 'push', value: 20 },
   { op: 'push', value: 30 },
-  { op: 'pop' }
+  { op: 'top' },
+  { op: 'pop' },
+  { op: 'pop' },
+  { op: 'push', value: 40 }
 ];
+
+const STACK_EXPECT = { finalStack: [10, 40], top: 40, popReturns: 30 };
 
 /**
  * Trusted animation configuration for Binary Search. Inclusive bounds, mid
@@ -207,7 +219,7 @@ const BINARY_SEARCH_ANIMATION = {
 
 /** The lesson this configuration is demonstrated with. */
 const BINARY_SEARCH_LESSON = {
-  title: 'Binary Search in 20 Seconds',
+  title: 'Binary Search in 45 Seconds',
   audience: 'Beginner software engineering students',
   objective:
     'Understand how iterative binary search halves a sorted search interval and updates its bounds.',
@@ -240,11 +252,11 @@ const SEED: SeedConcept[] = [
       'class Stack<T> {\n  private items: T[] = [];\n\n  push(value: T): void {\n    this.items.push(value);\n  }\n\n  pop(): T | undefined {\n    return this.items.pop();\n  }\n\n  peek(): T | undefined {\n    return this.items[this.items.length - 1];\n  }\n\n  get size(): number {\n    return this.items.length;\n  }\n}',
     time: 'O(1) push, pop and peek',
     space: 'O(n) for n stored elements',
-    exampleInput: 'PUSH(10), PUSH(20), PUSH(30), POP()',
-    expectedOutput: 'Stack holds 10, 20 after POP; POP returned 30; TOP is 20.',
+    exampleInput: 'PUSH(10), PUSH(20), PUSH(30), PEEK(), POP(), POP(), PUSH(40)',
+    expectedOutput: 'PEEK returns 30; POP returns 30 then 20; the final PUSH leaves [10, 40].',
     animation: {
       ops: STACK_OPS,
-      expect: { finalStack: [10, 20], top: 20, popReturns: 30 }
+      expect: STACK_EXPECT
     },
     related: ['arrays', 'queues', 'recursion']
   },
@@ -698,96 +710,153 @@ if (count.n === 0) {
  * animation configuration: attaches the trusted config and completes the
  * lesson's copy without overwriting anything a person has edited.
  */
-function ensureBinarySearchDemo(): void {
-  const concept = db
-    .prepare("SELECT id, animation_config FROM concepts WHERE slug = 'binary-search'")
-    .get() as { id: string; animation_config: string } | undefined;
-  if (!concept) return;
+/** Copy for the stack short that ships with a fresh database. */
+const STACK_LESSON = {
+  title: 'Stacks in 45 Seconds',
+  audience: 'Beginner software engineering students',
+  objective: 'Watch PUSH, PEEK and POP change one stack and see why LIFO holds.',
+  hook: 'Three values go in. Which one comes out first?',
+  narration:
+    'Push 10, 20 and 30. PEEK shows 30 without removing it. POP returns 30 and then 20, because a stack is last in, first out. A final PUSH(40) lands above 10.',
+  on_screen_text: 'LIFO: the last value in is the first value out.',
+  key_takeaway: 'LIFO: the last value pushed is the first value popped.',
+  cta: 'POP on an empty stack? That is underflow — it returns EMPTY.',
+  sources: 'Cormen et al., Introduction to Algorithms (3rd ed.), §10.1; MDN Array.prototype.pop.'
+};
 
-  const config = safeParse(concept.animation_config);
-  const configured = Boolean(config) && config!.kind === 'binary-search' && Array.isArray(config!.array);
-  if (!configured) {
-    db.prepare('UPDATE concepts SET animation_config = ?, updated_at = ? WHERE id = ?').run(
-      JSON.stringify(BINARY_SEARCH_ANIMATION),
-      nowIso(),
-      concept.id
-    );
-  }
+const DEMO_SECONDS = 45;
 
+/** Creates the demo lesson for a concept, or fills in copy a person has not set. */
+function ensureDemoLesson(conceptId: string, copy: Record<string, string>): void {
   const existing = db
     .prepare('SELECT * FROM lessons WHERE concept_id = ? ORDER BY created_at LIMIT 1')
-    .get(concept.id) as Record<string, unknown> | undefined;
+    .get(conceptId) as Record<string, unknown> | undefined;
 
   if (!existing) {
     db.prepare(
       `INSERT INTO lessons (id, concept_id, title, audience, objective, duration_seconds, hook,
          narration, on_screen_text, key_takeaway, cta, sources, review_status, scenes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 20, ?, ?, ?, ?, ?, ?, 'draft', '[]', ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', '[]', ?, ?)`
     ).run(
       newId(),
-      concept.id,
-      BINARY_SEARCH_LESSON.title,
-      BINARY_SEARCH_LESSON.audience,
-      BINARY_SEARCH_LESSON.objective,
-      BINARY_SEARCH_LESSON.hook,
-      BINARY_SEARCH_LESSON.narration,
-      BINARY_SEARCH_LESSON.on_screen_text,
-      BINARY_SEARCH_LESSON.key_takeaway,
-      BINARY_SEARCH_LESSON.cta,
-      BINARY_SEARCH_LESSON.sources,
+      conceptId,
+      copy.title,
+      copy.audience,
+      copy.objective,
+      DEMO_SECONDS,
+      copy.hook,
+      copy.narration,
+      copy.on_screen_text,
+      copy.key_takeaway,
+      copy.cta,
+      copy.sources,
       nowIso(),
       nowIso()
     );
-  } else {
-    const fills = (Object.entries(BINARY_SEARCH_LESSON) as [string, string][]).filter(
-      ([key]) => !String(existing[key] ?? '').trim()
-    );
-    if (fills.length > 0) {
-      db.prepare(
-        `UPDATE lessons SET ${fills.map(([key]) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`
-      ).run(
-        ...fills.map(([, value]) => value as never),
-        nowIso(),
-        String(existing.id)
-      );
-    }
+    return;
   }
 
-  const conceptRow = db.prepare('SELECT * FROM concepts WHERE id = ?').get(concept.id) as ConceptInput | undefined;
-  if (!conceptRow) return;
+  // The demo shorts are 45 seconds now; keep the seeded titles honest.
+  db.prepare(
+    `UPDATE lessons
+       SET title = replace(replace(title, '20 seconds', '45 seconds'), '20 Seconds', '45 Seconds'), updated_at = ?
+     WHERE concept_id = ? AND (title LIKE '%20 seconds%' OR title LIKE '%20 Seconds%')`
+  ).run(nowIso(), conceptId);
 
-  /**
-   * Every lesson of this concept keeps a usable storyboard. Storyboards built by
-   * the previous builder stored the whole narration as the trace caption and had
-   * no complexity facts; they are replaced only when provably untouched (caption
-   * still equals the narration, no duplicated scenes), so hand edits survive.
-   */
-  const isLegacyStoryboard = (stored: { type?: string; caption?: string; id?: string; facts?: unknown[] }[], lesson: LessonInput): boolean => {
-    const traceScene = stored.find((scene) => scene.type === 'trace');
-    const complexityScene = stored.find((scene) => scene.type === 'complexity');
-    return (
-      Boolean(traceScene) &&
-      traceScene?.caption === lesson.narration &&
-      !(Array.isArray(complexityScene?.facts) && complexityScene!.facts!.length > 0) &&
-      !stored.some((scene) => String(scene.id || '').includes('-copy-'))
-    );
-  };
+  const fills = Object.entries(copy).filter(([key]) => !String(existing[key] ?? '').trim());
+  if (fills.length > 0) {
+    db.prepare(
+      `UPDATE lessons SET ${fills.map(([key]) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`
+    ).run(...fills.map(([, value]) => value as never), nowIso(), String(existing.id));
+  }
+}
 
-  const lessons = db.prepare('SELECT * FROM lessons WHERE concept_id = ?').all(concept.id) as (LessonInput & {
-    scenes: string;
-  })[];
-  for (const lesson of lessons) {
-    const stored = safeParse(lesson.scenes);
-    const list = Array.isArray(stored)
-      ? (stored as { type?: string; caption?: string; id?: string; facts?: unknown[] }[])
-      : [];
-    if (list.length > 0 && !isLegacyStoryboard(list, lesson)) continue;
-    const scenes = buildScenes(lesson, conceptRow);
-    db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
-      JSON.stringify(scenes),
-      nowIso(),
-      lesson.id
-    );
+/**
+ * Keeps the two demo shorts on the current animation timeline.
+ *
+ * The renderer is continuous, so a storyboard only has to keep one beat window
+ * per verified operation. Storyboards written by the old slide builder (a code
+ * scene, one scene per operation for a partial trace, 20 second timing) cannot
+ * describe the new shorts, so those are rebuilt; anything a person has duplicated
+ * or re-timed is left alone.
+ */
+function ensureMotionDemos(): void {
+  // New demos are 45 second vertical shorts.
+  db.prepare("UPDATE brand SET default_duration = ? WHERE id = 1 AND default_duration < ?").run(
+    DEMO_SECONDS,
+    DEMO_SECONDS
+  );
+
+  const stackConcept = db
+    .prepare("SELECT id, animation_config FROM concepts WHERE slug = 'stacks'")
+    .get() as { id: string; animation_config: string } | undefined;
+  if (stackConcept) {
+    const config = safeParse(stackConcept.animation_config);
+    const ops = Array.isArray(config?.ops) ? (config!.ops as Record<string, unknown>[]) : [];
+    const isLegacySeed = ops.length === 4 && ops[3]?.op === 'pop';
+    if (!config || ops.length === 0 || isLegacySeed) {
+      db.prepare('UPDATE concepts SET animation_config = ?, updated_at = ? WHERE id = ?').run(
+        JSON.stringify({ ops: STACK_OPS, expect: STACK_EXPECT }),
+        nowIso(),
+        stackConcept.id
+      );
+    }
+    ensureDemoLesson(stackConcept.id, STACK_LESSON);
+  }
+
+  const binaryConcept = db
+    .prepare("SELECT id, animation_config FROM concepts WHERE slug = 'binary-search'")
+    .get() as { id: string; animation_config: string } | undefined;
+  if (binaryConcept) {
+    const config = safeParse(binaryConcept.animation_config);
+    const configured = Boolean(config) && config!.kind === 'binary-search' && Array.isArray(config!.array);
+    if (!configured) {
+      db.prepare('UPDATE concepts SET animation_config = ?, updated_at = ? WHERE id = ?').run(
+        JSON.stringify(BINARY_SEARCH_ANIMATION),
+        nowIso(),
+        binaryConcept.id
+      );
+    }
+    ensureDemoLesson(binaryConcept.id, BINARY_SEARCH_LESSON);
+  }
+
+  for (const conceptId of [stackConcept?.id, binaryConcept?.id]) {
+    if (!conceptId) continue;
+    const conceptRow = db.prepare('SELECT * FROM concepts WHERE id = ?').get(conceptId) as ConceptInput | undefined;
+    if (!conceptRow) continue;
+
+    const lessons = db.prepare('SELECT * FROM lessons WHERE concept_id = ?').all(conceptId) as (LessonInput & {
+      scenes: string;
+    })[];
+    const run = runConcept(conceptRow);
+
+    for (const lesson of lessons) {
+      const list = safeParse(lesson.scenes);
+      const stored = Array.isArray(list) ? (list as { type?: string; id?: string }[]) : [];
+      const duplicated = stored.some((scene) => String(scene.id || '').includes('-copy-'));
+      if (duplicated) continue;
+
+      const executionBeats = stored.filter((scene) => scene.type === 'execution').length;
+      const traceBeats = stored.filter((scene) => scene.type === 'trace').length;
+      const mismatchedPlan =
+        stored.length === 0 ||
+        stored.some((scene) => scene.type === 'code') ||
+        (run.kind === 'stack' && executionBeats !== run.events.length) ||
+        (run.kind === 'binary-search' && traceBeats !== 1);
+
+      // A storyboard the animation cannot describe (a slide plan) is rebuilt once.
+      // Any deliberate length a person chose afterwards is preserved.
+      if (!mismatchedPlan) continue;
+      const seconds = Number(lesson.duration_seconds) === 20 ? DEMO_SECONDS : Number(lesson.duration_seconds);
+      const refreshed: LessonInput = { ...lesson, duration_seconds: seconds };
+      const scenes = buildScenes(refreshed, conceptRow);
+      db.prepare('UPDATE lessons SET duration_seconds = ?, scenes = ?, updated_at = ? WHERE id = ?').run(
+        seconds,
+        JSON.stringify(scenes),
+        nowIso(),
+        lesson.id
+      );
+    }
   }
 }
 
@@ -800,7 +869,7 @@ function safeParse(raw: string): Record<string, unknown> | null {
   }
 }
 
-ensureBinarySearchDemo();
+ensureMotionDemos();
 
 export type Brand = {
   name: string;

@@ -58,7 +58,8 @@ function baseInput() {
   return {
     profile: PROFILES.hd,
     expectedFrames: 600,
-    bytes: 640_000,
+    // 9.6 MB over 20 s is 3.84 Mbit/s: a plausible HD motion-graphics encode.
+    bytes: 9_600_000,
     head: Buffer.from('\u0000\u0000\u0000\u0018ftypisom', 'latin1'),
     media: goodMedia,
     decodedFrames: 600,
@@ -103,6 +104,20 @@ test('a valid render passes every automated check', () => {
   assert.deepEqual(failed, []);
   assert.equal(validation.ok, true);
   assert.ok(validation.humanReview.length >= 2, 'legibility and accuracy still need a human');
+});
+
+test('a tiny file fails the bitrate check even when the metadata is perfect', () => {
+  // The reported symptom: 20 s of 4K at 0.36 MB (~0.14 Mbit/s) passes duration,
+  // resolution and frame count but is visibly mush.
+  const validation = assessRender({
+    ...baseInput(),
+    profile: PROFILES['4k'],
+    media: { ...goodMedia, width: 2160, height: 3840 },
+    expectedFrames: 600,
+    bytes: 360_000
+  });
+  assert.equal(validation.ok, false);
+  assert.ok(validation.checks.some((check) => check.id === 'bitrate' && !check.ok));
 });
 
 test('a blank render fails the sampled-frame check', () => {
