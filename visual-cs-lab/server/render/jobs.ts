@@ -344,7 +344,9 @@ async function encodeMoment(args: {
 /** Records a validated render job as the lesson's silent video asset. */
 export function registerRenderAsset(jobId: string): VideoAssetRow | null {
   const job = db
-    .prepare('SELECT id, lesson_id, preset, width, height, output_path, bytes, duration_seconds, validation, state FROM render_jobs WHERE id = ?')
+    .prepare(
+      'SELECT id, lesson_id, preset, width, height, output_path, bytes, duration_seconds, validation, state, storyboard_hash FROM render_jobs WHERE id = ?'
+    )
     .get(jobId) as
     | {
         id: string;
@@ -357,6 +359,7 @@ export function registerRenderAsset(jobId: string): VideoAssetRow | null {
         duration_seconds: number;
         validation: string | null;
         state: string;
+        storyboard_hash: string;
       }
     | undefined;
   if (!job || job.state !== 'done' || !job.output_path) return null;
@@ -365,9 +368,13 @@ export function registerRenderAsset(jobId: string): VideoAssetRow | null {
     | undefined;
   if (existing) return existing;
 
-  const lesson = db.prepare('SELECT version, theme_id FROM lessons WHERE id = ?').get(job.lesson_id) as
-    | { version: number; theme_id: string }
+  const lesson = db.prepare('SELECT version, theme_id, scenes FROM lessons WHERE id = ?').get(job.lesson_id) as
+    | { version: number; theme_id: string; scenes: string }
     | undefined;
+  // An asset belongs to the storyboard it was rendered from: a job whose snapshot
+  // no longer matches the lesson is a stale encode, not a current video.
+  const currentHash = createHash('sha1').update(String(lesson?.scenes || '[]')).digest('hex');
+  if (currentHash !== String(job.storyboard_hash || '')) return null;
   const validation = job.validation ? (JSON.parse(job.validation) as { ok?: boolean }) : null;
   const id = `asset-${job.id}`;
   const stamp = nowIso();

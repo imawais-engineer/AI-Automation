@@ -19,6 +19,7 @@ import {
   type LessonInput,
   type Scene
 } from './scenes.ts';
+import { ensureDerivedContent } from './content-bootstrap.ts';
 import { lessonPipeline } from './pipeline.ts';
 import { inspectPlan } from './anim/inspect.ts';
 import { motionForLesson } from './motion.ts';
