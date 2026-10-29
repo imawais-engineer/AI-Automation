@@ -4,7 +4,9 @@ import path from 'node:path';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
-import { db, newId, nowIso, readBrand } from './db.ts';
+import { db, newId, nowIso, readBrand, readBranding } from './db.ts';
+import { brandingFrom } from './branding.ts';
+import { ensureThumbnail, saveManualThumbnail, thumbnailStatus } from './render/thumbnails.ts';
 import { parseOps, trace, validate } from './algorithms/stack.ts';
 import { traceBinarySearch } from './algorithms/binary-search.ts';
 import {
@@ -328,7 +330,7 @@ app.get('/api/lessons/:id', (req, res) => {
   if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
   const concept = requireConcept(lesson.concept_id);
   if (!concept) return res.status(404).json({ error: 'Concept not found.' });
-  const issues = lessonIssues(lesson, concept);
+  const issues = lessonIssues(lesson, concept, readBranding());
   const scenes = scenesFor(req.params.id) || [];
   const renders = db
     .prepare('SELECT * FROM render_jobs WHERE lesson_id = ? ORDER BY created_at DESC')
@@ -345,6 +347,7 @@ app.get('/api/lessons/:id', (req, res) => {
       .prepare('SELECT * FROM publish_jobs WHERE lesson_id = ? ORDER BY created_at DESC')
       .all(req.params.id),
     voiceover,
+    thumbnail: thumbnailStatus(req.params.id),
     pipeline: lessonPipeline({ lesson, concept, scenes, issues, renders, voiceover })
   });
 });
@@ -368,14 +371,15 @@ app.patch('/api/lessons/:id', (req, res) => {
 app.post('/api/lessons/:id/storyboard', (req, res) => {
   const bundle = lessonBundle(req.params.id);
   if (!bundle) return res.status(404).json({ error: 'Lesson not found.' });
-  const scenes = buildScenes(bundle.lesson, bundle.concept);
+  const branding = readBranding();
+  const scenes = buildScenes(bundle.lesson, bundle.concept, branding);
   db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
     JSON.stringify(scenes),
     nowIso(),
     req.params.id
   );
   // Validate the row we just wrote, not the stale copy loaded before the update.
-  const issues = lessonIssues({ ...bundle.lesson, scenes: JSON.stringify(scenes) }, bundle.concept);
+  const issues = lessonIssues({ ...bundle.lesson, scenes: JSON.stringify(scenes) }, bundle.concept, branding);
   res.json({
     scenes,
     durationMs: scenes.reduce((sum, scene) => sum + scene.durationMs, 0),
@@ -454,7 +458,7 @@ app.patch('/api/lessons/:id/scenes', (req, res) => {
     lesson.id
   );
   const updated = { ...lesson, scenes: JSON.stringify(next) };
-  res.json({ scenes: next, issues: lessonIssues(updated, concept), unknownIds });
+  res.json({ scenes: next, issues: lessonIssues(updated, concept, readBranding()), unknownIds });
 });
 
 /** Duplicates one scene directly after itself, so a beat can be repeated. */
@@ -480,7 +484,7 @@ app.post('/api/lessons/:id/scenes/:sceneId/duplicate', (req, res) => {
     lesson.id
   );
   const updated = { ...lesson, scenes: JSON.stringify(next) };
-  res.status(201).json({ scenes: next, issues: lessonIssues(updated, concept) });
+  res.status(201).json({ scenes: next, issues: lessonIssues(updated, concept, readBranding()) });
 });
 
 /* ---------------------------------------------------------------- voice-over */
@@ -565,7 +569,8 @@ app.get('/api/brand', (_req, res) => {
 app.patch('/api/brand', (req, res) => {
   const fields = [
     'name', 'accent', 'background', 'panel', 'ink', 'font_family', 'watermark',
-    'caption_style', 'code_style', 'default_duration', 'default_resolution', 'intro', 'outro'
+    'caption_style', 'code_style', 'default_duration', 'default_resolution', 'intro', 'outro',
+    'presenter', 'role', 'closing_line', 'opening_ms', 'ending_ms', 'opening_style', 'auto_thumbnail'
   ];
   const patch = pick(req.body as Record<string, unknown>, fields);
   const entries = Object.entries(patch);
@@ -574,7 +579,78 @@ app.patch('/api/brand', (req, res) => {
     ...entries.map(([, value]) => value as never),
     nowIso()
   );
-  res.json({ brand: readBrand() });
+  res.json({ brand: readBrand(), branding: readBranding() });
+});
+
+/**
+ * Applies the current branding to videos that already exist: each storyboard is
+ * rebuilt on the current opening/ending durations (so every beat, caption and
+ * narration timestamp is recalculated) and its thumbnail is recut from the new
+ * opening frame. Manual scene timing edits are replaced by this rebuild.
+ */
+app.post('/api/brand/regenerate', (req, res) => {
+  const branding = readBranding();
+  const lessonId = String(req.body?.lessonId || '');
+  const rows = db
+    .prepare("SELECT * FROM lessons WHERE (? = '' OR id = ?) ORDER BY created_at")
+    .all(lessonId, lessonId) as (LessonInput & { scenes: string })[];
+
+  let rebuilt = 0;
+  let thumbnails = 0;
+  const failures: { lessonId: string; error: string }[] = [];
+
+  for (const lesson of rows) {
+    const concept = requireConcept(lesson.concept_id);
+    if (!concept) {
+      failures.push({ lessonId: lesson.id, error: 'The concept this lesson belongs to no longer exists.' });
+      continue;
+    }
+    try {
+      const scenes = buildScenes(lesson, concept, branding);
+      db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
+        JSON.stringify(scenes),
+        nowIso(),
+        lesson.id
+      );
+      rebuilt++;
+    } catch (error) {
+      failures.push({ lessonId: lesson.id, error: (error as Error).message });
+      continue;
+    }
+    const thumb = ensureThumbnail(lesson.id, { force: true });
+    if (thumb.file) thumbnails++;
+  }
+
+  res.json({ rebuilt, thumbnails, failures, branding });
+});
+
+/* --------------------------------------------------------------- thumbnails */
+
+/** The poster image for a video, generated from its own opening frame on demand. */
+app.get('/api/lessons/:id/thumbnail.png', (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  const result = ensureThumbnail(req.params.id);
+  if (!result.file) return res.status(404).json({ error: result.error || 'No thumbnail available.' });
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Thumbnail-Source', result.row?.source || 'auto');
+  res.sendFile(result.file);
+});
+
+/** Replaces the thumbnail without touching the video. */
+app.post('/api/lessons/:id/thumbnail', async (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  const result = await saveManualThumbnail(req.params.id, String(req.body?.image || ''));
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.status(201).json({ thumbnail: thumbnailStatus(req.params.id) });
+});
+
+/** Recuts the automatic thumbnail from the current opening frame. */
+app.post('/api/lessons/:id/thumbnail/auto', (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  const result = ensureThumbnail(req.params.id, { force: true });
+  if (!result.file) return res.status(400).json({ error: result.error || 'No thumbnail available.' });
+  res.json({ thumbnail: thumbnailStatus(req.params.id), capturedAtMs: result.row?.captured_at_ms ?? 0 });
 });
 
 /* --------------------------------------------------------------------- create */
@@ -728,7 +804,7 @@ app.post('/api/create', (req, res) => {
   );
 
   const lesson = requireLesson(id)!;
-  const scenes = buildScenes(lesson, concept);
+  const scenes = buildScenes(lesson, concept, readBranding());
   db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
     JSON.stringify(scenes),
     nowIso(),
@@ -736,7 +812,7 @@ app.post('/api/create', (req, res) => {
   );
 
   const stored = requireLesson(id)!;
-  const issues = lessonIssues(stored, concept);
+  const issues = lessonIssues(stored, concept, readBranding());
   res.status(201).json({
     lesson: { ...stored, scenes: safeJson<Scene[]>(stored.scenes, []) },
     concept,
@@ -804,7 +880,12 @@ app.get('/api/renders/:id/video', (req, res) => {
   if (!job || job.state !== 'done' || !job.output_path) {
     return res.status(404).json({ error: 'This render has no finished MP4 yet.' });
   }
-  res.download(job.output_path, `visual-cs-lab-${job.preset}.mp4`);
+  // The file is named after the person it is presented by, not the internal app.
+  const lesson = db.prepare('SELECT title FROM lessons WHERE id = ?').get(job.lesson_id) as
+    | { title: string }
+    | undefined;
+  const name = `${slugify(readBranding().presenter)}-${slugify(lesson?.title || 'short')}-${job.preset}.mp4`;
+  res.download(job.output_path, name);
 });
 
 /* ---------------------------------------------------------------- publishing */

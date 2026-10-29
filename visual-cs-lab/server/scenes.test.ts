@@ -2,18 +2,24 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { allocateDurations, buildScenes, lessonIssues, type ConceptInput, type LessonInput, type Scene } from './scenes.ts';
+import { brandingFrom, openingCaptureMs, shortTitle } from './branding.ts';
+import { inspectPlan, verifyBranding } from './anim/inspect.ts';
 import { planFor, type PlanBrand } from './anim/index.ts';
 import { stackStateAt } from './anim/stack.ts';
 import { binaryStateAt, blockWidth } from './anim/binary.ts';
 
 const BRAND: PlanBrand = {
-  name: 'Visual CS Lab',
+  name: 'Muhammad Awais',
   accent: '#22d3ee',
   background: '#0b1220',
   panel: '#141c2e',
   ink: '#e6edf7',
-  watermark: 'Visual CS Lab',
-  outro: ''
+  watermark: 'Muhammad Awais',
+  outro: '',
+  presenter: 'Muhammad Awais',
+  role: 'Aspiring Forward Deployed AI Engineer',
+  closing: 'Building at the intersection of AI and software.',
+  openingStyle: 'cinematic'
 };
 
 const BINARY_CONCEPT: ConceptInput = {
@@ -59,16 +65,16 @@ function withScenes(lesson: LessonInput, scenes: Scene[]): LessonInput {
   return { ...lesson, scenes: JSON.stringify(scenes) };
 }
 
-test('binary search storyboard has five beats totalling exactly 45 seconds', () => {
+test('binary search storyboard opens, teaches and closes inside exactly 45 seconds', () => {
   const scenes = buildScenes(BINARY_LESSON, BINARY_CONCEPT);
   assert.deepEqual(
     scenes.map((scene) => scene.type),
-    ['hook', 'concept', 'trace', 'complexity', 'brand']
+    ['open', 'hook', 'concept', 'trace', 'complexity', 'brand']
   );
-  assert.deepEqual(
-    scenes.map((scene) => scene.durationMs),
-    [3000, 5000, 27500, 7000, 2500]
-  );
+  // The 2.5s opening and 2.5s closing are allocated first; the lesson is fitted
+  // into the 40 seconds that remain.
+  assert.equal(scenes[0].durationMs, 2500);
+  assert.equal(scenes[scenes.length - 1].durationMs, 2500);
   assert.equal(
     scenes.reduce((sum, scene) => sum + scene.durationMs, 0),
     45000
@@ -76,10 +82,42 @@ test('binary search storyboard has five beats totalling exactly 45 seconds', () 
   assert.equal((45000 / 1000) * 30, 1350, 'a 45 second short is exactly 1350 frames at 30 fps');
 });
 
+test('the opening runs 2–3 seconds, carries the lesson title and the personal credit', () => {
+  for (const seconds of [10, 20, 45, 60]) {
+    const scenes = buildScenes({ ...BINARY_LESSON, duration_seconds: seconds }, BINARY_CONCEPT);
+    const opening = scenes[0];
+    assert.equal(opening.type, 'open');
+    assert.ok(opening.durationMs >= 2000 && opening.durationMs <= 3000, `${opening.durationMs}ms opening`);
+    assert.equal(opening.title, 'Binary Search', 'the lesson title is shortened to its topic');
+    assert.equal(opening.caption, 'Presented by Muhammad Awais');
+    const ending = scenes[scenes.length - 1];
+    assert.equal(ending.type, 'brand');
+    assert.ok(ending.durationMs >= 2000 && ending.durationMs <= 3000);
+    assert.equal(ending.title, 'Muhammad Awais');
+    assert.equal(ending.subtitle, 'Aspiring Forward Deployed AI Engineer');
+    assert.equal(ending.caption, 'Building at the intersection of AI and software.');
+  }
+});
+
+test('the opening and ending durations come from the branding settings', () => {
+  const branding = { ...brandingFrom(null), openingMs: 3000, endingMs: 2000 };
+  const scenes = buildScenes(BINARY_LESSON, BINARY_CONCEPT, branding);
+  assert.equal(scenes[0].durationMs, 3000);
+  assert.equal(scenes[scenes.length - 1].durationMs, 2000);
+  assert.equal(scenes.reduce((sum, scene) => sum + scene.durationMs, 0), 45000);
+});
+
+test('a duration too short for the opening, lesson and closing is reported', () => {
+  const short = { ...BINARY_LESSON, duration_seconds: 10 };
+  const issues = lessonIssues({ ...short, scenes: JSON.stringify(buildScenes(short, BINARY_CONCEPT)) }, BINARY_CONCEPT);
+  assert.ok(issues.some((issue) => /raise the duration to at least/i.test(issue)));
+});
+
 test('binary search storyboard carries the verified trace and the lesson copy', () => {
   const scenes = buildScenes(BINARY_LESSON, BINARY_CONCEPT);
-  const [hook, concept, trace, complexity, brand] = scenes;
+  const [opening, hook, concept, trace, complexity, brand] = scenes;
 
+  assert.equal(opening.type, 'open');
   assert.equal(hook.title, BINARY_LESSON.hook);
 
   const setup = concept.visual;
@@ -105,7 +143,8 @@ test('binary search storyboard carries the verified trace and the lesson copy', 
   assert.match(complexity.caption, /O\(1\)/);
   assert.equal(complexity.title, BINARY_LESSON.key_takeaway);
 
-  assert.equal(brand.subtitle, "Understand the algorithm. Don't just memorize it.");
+  assert.equal(brand.title, 'Muhammad Awais');
+  assert.equal(brand.subtitle, 'Aspiring Forward Deployed AI Engineer');
 });
 
 test('storyboard durations scale exactly to other lesson lengths', () => {
@@ -134,8 +173,8 @@ test('validation reports a missing storyboard, hook and takeaway', () => {
 
 test('a storyboard whose trace steps were altered fails readiness', () => {
   const scenes = buildScenes(BINARY_LESSON, BINARY_CONCEPT);
-  const tampered = scenes.map((scene, index) => {
-    if (index !== 2 || scene.visual?.kind !== 'binary-search') return scene;
+  const tampered = scenes.map((scene) => {
+    if (scene.type !== 'trace' || scene.visual?.kind !== 'binary-search') return scene;
     const steps = scene.visual.steps.map((step, i) => (i === 1 ? { ...step, mid: 4 } : step));
     return { ...scene, visual: { ...scene.visual, steps } };
   });
@@ -211,8 +250,8 @@ test('the stack storyboard still builds and validates', () => {
   };
 
   const scenes = buildScenes(lesson, concept);
-  // hook, setup, one beat per verified operation, LIFO, complexity, brand.
-  assert.equal(scenes.length, 9);
+  // opening, hook, setup, one beat per verified operation, LIFO, complexity, closing.
+  assert.equal(scenes.length, 10);
   assert.equal(scenes.filter((scene) => scene.type === 'execution').length, 4);
   assert.equal(
     scenes.reduce((sum, scene) => sum + scene.durationMs, 0),

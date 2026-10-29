@@ -12,13 +12,17 @@ import {
 } from './voiceover.ts';
 
 const BRAND: PlanBrand = {
-  name: 'Visual CS Lab',
+  name: 'Muhammad Awais',
   accent: '#22d3ee',
   background: '#0b1220',
   panel: '#141c2e',
   ink: '#e6edf7',
-  watermark: 'Visual CS Lab',
-  outro: ''
+  watermark: 'Muhammad Awais',
+  outro: '',
+  presenter: 'Muhammad Awais',
+  role: 'Aspiring Forward Deployed AI Engineer',
+  closing: 'Building at the intersection of AI and software.',
+  openingStyle: 'cinematic'
 };
 
 const STACK_CONCEPT: ConceptInput = {
@@ -97,8 +101,10 @@ test('a stack script narrates every operation with the verified result', () => {
   const { script } = generateVoiceover({ plan, lesson: STACK_LESSON, concept: STACK_CONCEPT });
 
   assert.ok(script.segments.length >= plan.beats.length);
-  assert.equal(script.segments[0].scene, 'Hook');
+  assert.equal(script.segments[0].scene, 'Opening');
   assert.equal(script.segments[0].startMs, 0);
+  assert.match(script.segments[0].text, /Presented by Muhammad Awais/);
+  assert.equal(script.segments[1].scene, 'Hook');
 
   const popSegment = script.segments.find((segment) => segment.scene.includes('POP'));
   assert.ok(popSegment, 'the POP scene is narrated');
@@ -165,7 +171,8 @@ test('the copyable script follows the documented format', () => {
   assert.match(markdown, /\*\*Video title:\*\* Binary Search in 45 Seconds/);
   assert.match(markdown, /\*\*Estimated narration duration:\*\* 45\.0s/);
   assert.match(markdown, /\| Timestamp \| Scene \| Voice-over \|/);
-  assert.match(markdown, /\| 00:00–00:03 \| Hook \|/);
+  assert.match(markdown, /\| 00:00–00:03 \| Opening \| Binary Search\. Presented by Muhammad Awais\. \|/);
+  assert.match(markdown, /\| 00:03–00:05 \| Hook \|/);
   assert.match(markdown, /\*\*Continuous script\*\*/);
   assert.equal(markdown.split(script.script).length, 2, 'the continuous script is included once');
 });

@@ -36,10 +36,12 @@ import {
   footer,
   hudHeader,
   hudOperation,
+  openingReveal,
   paletteOf,
   popCamera,
   pushCamera,
   safeBox,
+  subjectSilhouette,
   toast,
   type Camera,
   type Dims,
@@ -146,6 +148,12 @@ export function binaryStateAt(plan: BinaryPlan, tMs: number): BinaryMarkerState 
 
 function cameraFor(plan: BinaryPlan, tMs: number): Camera {
   const base = { x: 0, y: 30, zoom: 1.02 };
+  const opening = plan.beats.find((beat) => beat.key === 'open');
+  if (opening && tMs < opening.endMs) {
+    // The opening settles the camera: a slow push-in ends exactly as the array appears.
+    const p = easeInOutCubic(clamp01((tMs - opening.startMs) / Math.max(1, opening.endMs - opening.startMs)));
+    return { x: 0, y: lerp(74, base.y, p), zoom: lerp(1.07, base.zoom, p) };
+  }
   const foundWindow = plan.steps.find((window) => window.step.comparison === 'equal');
   const halving = plan.halving;
   const complexityBeat = plan.beats.find((beat) => beat.key === 'complexity' && beat.title.toLowerCase().includes('complex'));
@@ -485,6 +493,8 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
   const brandBeat = plan.beats.find((item) => item.key === 'brand');
   const inBrand = Boolean(brandBeat && tMs >= brandBeat.startMs);
   const traceBeat = plan.beats.find((item) => item.title.toLowerCase().includes('trace'));
+  const openBeat = plan.beats.find((item) => item.key === 'open');
+  const inOpening = Boolean(openBeat && tMs >= openBeat.startMs && tMs < openBeat.endMs);
   const k = dims.width / 1080;
 
   backdrop(ctx, dims, cam, pal, tMs, { horizon: -420, glow: inBrand ? 0.6 : 1 });
@@ -510,9 +520,24 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
   ctx.fillStyle = rule;
   ctx.fillRect(-total / 2 + 10, baseline, total - 20, 3);
 
-  const arrayAlpha = clamp01((tMs - (plan.beats[0]?.startMs ?? 0) - 200) / 700) * (inBrand ? 0.4 : 1);
+  // The array arrives as the opening hands over, so the title is never drawn over
+  // the data it introduces.
+  const arrayStart = openBeat ? openBeat.endMs - 300 : (plan.beats[0]?.startMs ?? 0) + 200;
+  // The array leaves with the lesson: by the time the closing name is on screen the
+  // stage is clear behind it.
+  const stageFade = brandBeat ? 1 - track(tMs, brandBeat.startMs, brandBeat.startMs + 420) : 1;
+  const arrayAlpha = clamp01((tMs - arrayStart) / 700) * stageFade;
+  if (inOpening && openBeat) {
+    const glow =
+      easeOutCubic(track(tMs, openBeat.startMs + 120, openBeat.startMs + 720)) *
+      (1 - track(tMs, openBeat.endMs - 460, openBeat.endMs));
+    subjectSilhouette(ctx, 'binary', pal, glow * 0.6);
+  }
 
   plan.array.forEach((value, index) => {
+    // A block that is barely visible is not drawn at all: nothing off screen may
+    // be recorded, or it would be reported as colliding with the opening title.
+    if (arrayAlpha <= 0.15) return;
     const rect = blockRect(plan, index, state.eliminated.get(index) ?? 0);
     const discarded = state.eliminated.get(index) ?? 0;
     const isMid = state.comparing === index || (state.mid !== null && Math.round(state.mid) === index);
@@ -593,7 +618,8 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
     }
   }
 
-  if (!inBrand) {
+  // Markers belong to the lesson, not to the opening frame.
+  if (!inBrand && !inOpening) {
     drawMarkers(ctx, plan, state, pal, arrayAlpha);
     comparisonCallout(ctx, plan, state, pal, tMs, arrayAlpha);
   }
@@ -602,16 +628,26 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
 
   /* ---------------------------------------------------------------- overlays */
 
-  const headerAlpha = 1 - track(tMs, (brandBeat?.startMs ?? Infinity), (brandBeat?.startMs ?? Infinity) + 300);
+  const openFade = openBeat ? track(tMs, openBeat.endMs - 180, openBeat.endMs + 120) : 1;
+  const headerAlpha = Math.min(
+    1 - track(tMs, (brandBeat?.startMs ?? Infinity), (brandBeat?.startMs ?? Infinity) + 300),
+    openFade
+  );
   hudHeader(ctx, dims, pal, {
-    watermark: plan.brand.watermark || plan.brand.name,
+    watermark: plan.brand.watermark || plan.brand.presenter,
     step: 'BINARY SEARCH',
     alpha: headerAlpha
   });
 
+  if (inOpening && openBeat) {
+    openingReveal(ctx, dims, pal, plan.opening, tMs, openBeat);
+  }
+
   const activeStep = plan.steps.find((window) => tMs >= window.startMs && tMs < window.endMs);
 
-  const targetAlpha = clamp01((tMs - (plan.beats[0]?.startMs ?? 0)) / 700) * (inBrand ? 0.25 : 1);
+  const targetAlpha =
+    clamp01((tMs - (openBeat ? openBeat.endMs - 300 : (plan.beats[0]?.startMs ?? 0))) / 700) *
+    (inBrand ? 0.25 : 1);
   drawChip(ctx, SAFE * k, BAND.kicker * k, `TARGET ${plan.target}`, {
     size: 24 * k,
     color: pal.coral,
@@ -727,7 +763,7 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
 
   footer(ctx, dims, pal, {
     progress: plan.durationMs > 0 ? tMs / plan.durationMs : 0,
-    mark: plan.brand.watermark || plan.brand.name,
+    mark: plan.brand.watermark || plan.brand.presenter,
     alpha: headerAlpha
   });
 }

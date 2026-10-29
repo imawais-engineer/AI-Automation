@@ -171,7 +171,27 @@ export type Brand = {
   default_resolution: string;
   intro: string;
   outro: string;
+  /** The personal identity every video is presented under. */
+  presenter: string;
+  role: string;
+  closing_line: string;
+  opening_ms: number;
+  ending_ms: number;
+  opening_style: string;
+  auto_thumbnail: number;
+  updated_at: string;
 };
+
+export type ThumbnailStatus = {
+  source: 'auto' | 'manual' | 'none';
+  capturedAtMs: number;
+  updatedAt: string | null;
+};
+
+export function thumbnailUrl(lessonId: string, version?: number | string): string {
+  const stamp = version === undefined ? '' : `?v=${version}`;
+  return `/api/lessons/${lessonId}/thumbnail.png${stamp}`;
+}
 
 export type StackEvent = {
   n: number;

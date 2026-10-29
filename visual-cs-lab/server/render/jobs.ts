@@ -6,8 +6,9 @@ import path from 'node:path';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import ffmpegPath from 'ffmpeg-static';
 
-import { db, newId, nowIso, readBrand, type Brand } from '../db.ts';
+import { db, newId, nowIso, readBrand, readBranding, type Brand } from '../db.ts';
 import { effectiveConcept, lessonIssues, safeJson, type Scene } from '../scenes.ts';
+import { ensureThumbnail } from './thumbnails.ts';
 import { drawMoment, planBrand, planFor, type MotionPlan } from '../anim/index.ts';
 import { inspectPlan } from '../anim/inspect.ts';
 import { lessonBundle, motionForLesson } from '../motion.ts';
@@ -88,7 +89,7 @@ export function createJob(lessonId: string, preset: Preset): { job?: RenderJob; 
   const profile = PROFILES[preset];
   if (!profile) return { error: 'Unknown export preset.' };
 
-  const issues = lessonIssues(bundle.lesson, bundle.concept);
+  const issues = lessonIssues(bundle.lesson, bundle.concept, readBranding());
   if (issues.length > 0) {
     return { error: `The lesson is not ready to render yet: ${issues.join(' ')}` };
   }
@@ -235,6 +236,8 @@ async function encodeMoment(args: {
   fromMs?: number;
   toMs?: number;
   crf?: string;
+  /** Container metadata: the personal identity travels with the file. */
+  meta?: { title: string; artist: string; comment: string };
   onProgress?: (framesWritten: number, total: number) => void;
   isCancelled?: () => boolean;
 }): Promise<{ ok: boolean; frames: number; error?: string }> {
@@ -255,6 +258,14 @@ async function encodeMoment(args: {
       '-r', String(profile.fps),
       '-i', '-',
       '-an',
+      ...(args.meta
+        ? [
+            '-metadata', `title=${args.meta.title}`,
+            '-metadata', `artist=${args.meta.artist}`,
+            '-metadata', `author=${args.meta.artist}`,
+            '-metadata', `comment=${args.meta.comment}`
+          ]
+        : []),
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       // Gradient-heavy motion graphics lose detail fast at high CRF; the HD
@@ -428,6 +439,7 @@ async function renderJob(job: RenderJob): Promise<void> {
   }
 
   const brand = readBrand() as Brand;
+  const branding = readBranding();
   // Render the snapshot taken at enqueue: the file matches what was validated.
   const scenes = safeJson<Scene[]>(job.snapshot || '', []);
   const stored = scenesFor(job.lesson_id) || [];
@@ -494,6 +506,11 @@ async function renderJob(job: RenderJob): Promise<void> {
     motion,
     profile,
     output,
+    meta: {
+      title: bundle.lesson.title,
+      artist: branding.presenter,
+      comment: `${branding.presenter} · ${branding.role}`
+    },
     onProgress: (written, total) => {
       const pct = Math.min(95, (written / Math.max(1, total)) * 95);
       db.prepare('UPDATE render_jobs SET progress = ?, frames = ? WHERE id = ?').run(pct, written, job.id);
@@ -553,6 +570,15 @@ async function renderJob(job: RenderJob): Promise<void> {
       validation: JSON.stringify(validation),
       finished_at: nowIso()
     });
+    // The poster image is cut from the same deterministic opening frame, so the
+    // library and the publishing queue show what the video actually opens with.
+    const thumb = ensureThumbnail(job.lesson_id);
+    appendLog(
+      job.id,
+      thumb.file
+        ? `thumbnail ${thumb.regenerated ? 'generated' : 'reused'} from the opening frame at ${(thumb.row?.captured_at_ms ?? 0) / 1000}s`
+        : `thumbnail not generated: ${thumb.error || 'unknown reason'}`
+    );
   } catch (error) {
     setState(job.id, 'error', {
       error: `Validation failed: ${(error as Error).message}`,

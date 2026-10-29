@@ -4,6 +4,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 import { buildScenes, runConcept, type ConceptInput, type LessonInput } from './scenes.ts';
+import { BRAND_DEFAULTS, brandingFrom, type Branding } from './branding.ts';
 
 const DATA_DIR = process.env.DATA_DIR || '/tmp/visual-cs-lab';
 mkdirSync(DATA_DIR, { recursive: true });
@@ -80,6 +81,13 @@ CREATE TABLE IF NOT EXISTS brand (
   default_resolution TEXT NOT NULL DEFAULT '1080x1920',
   intro TEXT NOT NULL DEFAULT '',
   outro TEXT NOT NULL DEFAULT '',
+  presenter TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '',
+  closing_line TEXT NOT NULL DEFAULT '',
+  opening_ms INTEGER NOT NULL DEFAULT 2500,
+  ending_ms INTEGER NOT NULL DEFAULT 2500,
+  opening_style TEXT NOT NULL DEFAULT 'cinematic',
+  auto_thumbnail INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL
 );
 
@@ -111,6 +119,19 @@ CREATE TABLE IF NOT EXISTS voiceovers (
   segments TEXT NOT NULL DEFAULT '[]',
   script TEXT NOT NULL DEFAULT '',
   source_hash TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS thumbnails (
+  lesson_id TEXT PRIMARY KEY REFERENCES lessons(id) ON DELETE CASCADE,
+  source TEXT NOT NULL DEFAULT 'auto',
+  file TEXT NOT NULL DEFAULT '',
+  captured_at_ms INTEGER NOT NULL DEFAULT 0,
+  storyboard_hash TEXT NOT NULL DEFAULT '',
+  branding_hash TEXT NOT NULL DEFAULT '',
+  width INTEGER NOT NULL DEFAULT 0,
+  height INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -155,30 +176,68 @@ ensureColumn('render_jobs', 'validation', 'TEXT');
 /** Per-lesson animation input chosen on the Create screen. */
 ensureColumn('lessons', 'animation_input', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('voiceovers', 'duration_seconds', 'REAL NOT NULL DEFAULT 0');
+/** The personal brand identity: presenter, role, closing line and opening/ending timing. */
+ensureColumn('brand', 'presenter', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('brand', 'role', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('brand', 'closing_line', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('brand', 'opening_ms', 'INTEGER NOT NULL DEFAULT 2500');
+ensureColumn('brand', 'ending_ms', 'INTEGER NOT NULL DEFAULT 2500');
+ensureColumn('brand', 'opening_style', "TEXT NOT NULL DEFAULT 'cinematic'");
+ensureColumn('brand', 'auto_thumbnail', 'INTEGER NOT NULL DEFAULT 1');
 
 const brandRow = db.prepare('SELECT id FROM brand WHERE id = 1').get();
 if (!brandRow) {
   db.prepare(
     `INSERT INTO brand (id, name, accent, background, panel, ink, font_family, watermark,
-       caption_style, code_style, default_duration, default_resolution, intro, outro, updated_at)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       caption_style, code_style, default_duration, default_resolution, intro, outro,
+       presenter, role, closing_line, opening_ms, ending_ms, opening_style, auto_thumbnail, updated_at)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    'Visual CS Lab',
+    BRAND_DEFAULTS.presenter,
     '#22d3ee',
     '#0b1220',
     '#111c33',
     '#e6edf7',
     'Inter, system-ui, sans-serif',
-    'Visual CS Lab',
+    BRAND_DEFAULTS.presenter,
     JSON.stringify({ size: 46, contrast: 'high', background: 'rgba(3,8,18,.72)' }),
     JSON.stringify({ font: 'ui-monospace, SFMono-Regular, Menlo, monospace', size: 34 }),
     45,
     '1080x1920',
     '',
     '',
+    BRAND_DEFAULTS.presenter,
+    BRAND_DEFAULTS.role,
+    BRAND_DEFAULTS.closing,
+    2500,
+    2500,
+    'cinematic',
+    1,
     now
   );
 }
+
+/**
+ * The videos are presented under a personal brand now. A database written by an
+ * earlier build still carries the channel identity in its template name and
+ * watermark, so those are moved to the personal identity — but only while they
+ * still hold an old default, so a value a person typed is kept.
+ */
+db.prepare(
+  `UPDATE brand SET
+     presenter = CASE WHEN trim(presenter) = '' THEN ? ELSE presenter END,
+     role = CASE WHEN trim(role) = '' THEN ? ELSE role END,
+     closing_line = CASE WHEN trim(closing_line) = '' THEN ? ELSE closing_line END,
+     name = CASE WHEN trim(name) IN ('', 'Visual CS Lab', 'VS Lab', 'Visual CS') THEN ? ELSE name END,
+     watermark = CASE WHEN trim(watermark) IN ('', 'Visual CS Lab', 'VS Lab', 'Visual CS') THEN ? ELSE watermark END
+   WHERE id = 1`
+).run(
+  BRAND_DEFAULTS.presenter,
+  BRAND_DEFAULTS.role,
+  BRAND_DEFAULTS.closing,
+  BRAND_DEFAULTS.presenter,
+  BRAND_DEFAULTS.presenter
+);
 
 type SeedConcept = {
   slug: string;
@@ -793,6 +852,9 @@ function ensureDemoLesson(conceptId: string, copy: Record<string, string>): void
  * or re-timed is left alone.
  */
 function ensureMotionDemos(): void {
+  // Storyboards are built on the current personal branding, so a rebuild after a
+  // brand change produces the same bookends the Style screen shows.
+  const branding = brandingFrom(readBrand());
   // New demos are 45 second vertical shorts.
   db.prepare("UPDATE brand SET default_duration = ? WHERE id = 1 AND default_duration < ?").run(
     DEMO_SECONDS,
@@ -853,6 +915,9 @@ function ensureMotionDemos(): void {
       const mismatchedPlan =
         stored.length === 0 ||
         stored.some((scene) => scene.type === 'code') ||
+        // Storyboards written before the personal-brand opening existed are rebuilt
+        // once, so the demo shorts carry the opening and closing.
+        !stored.some((scene) => scene.type === 'open') ||
         (run.kind === 'stack' && executionBeats !== run.events.length) ||
         (run.kind === 'binary-search' && traceBeats !== 1);
 
@@ -861,7 +926,7 @@ function ensureMotionDemos(): void {
       if (!mismatchedPlan) continue;
       const seconds = Number(lesson.duration_seconds) === 20 ? DEMO_SECONDS : Number(lesson.duration_seconds);
       const refreshed: LessonInput = { ...lesson, duration_seconds: seconds };
-      const scenes = buildScenes(refreshed, conceptRow);
+      const scenes = buildScenes(refreshed, conceptRow, branding);
       db.prepare('UPDATE lessons SET duration_seconds = ?, scenes = ?, updated_at = ? WHERE id = ?').run(
         seconds,
         JSON.stringify(scenes),
@@ -897,9 +962,22 @@ export type Brand = {
   default_resolution: string;
   intro: string;
   outro: string;
+  /** The personal identity every video is presented under. */
+  presenter: string;
+  role: string;
+  closing_line: string;
+  opening_ms: number;
+  ending_ms: number;
+  opening_style: string;
+  auto_thumbnail: number;
   updated_at: string;
 };
 
 export function readBrand(): Brand {
   return db.prepare('SELECT * FROM brand WHERE id = 1').get() as Brand;
+}
+
+/** The personal brand identity the storyboard builder and the renderer share. */
+export function readBranding(): Branding {
+  return brandingFrom(readBrand());
 }

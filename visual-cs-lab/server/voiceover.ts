@@ -198,6 +198,16 @@ export function generateVoiceover(args: {
       : 'That is halving: each comparison drops half.';
 
   for (const beat of plan.beats) {
+    if (beat.sceneType === 'open') {
+      // The opening names the topic and who is presenting it.
+      add(
+        'Opening',
+        beat.startMs,
+        beat.endMs,
+        `${plan.opening.title || lesson.title}. Presented by ${plan.opening.presenter}.`
+      );
+      continue;
+    }
     if (beat.sceneType === 'hook') {
       add('Hook', beat.startMs, beat.endMs, hookLine);
       continue;
@@ -283,6 +293,7 @@ export function generateVoiceover(args: {
 export function voiceoverSourceHash(plan: MotionPlan, lesson: LessonInput, concept: ConceptInput): string {
   const payload = {
     title: lesson.title,
+    opening: plan.opening,
     copy: plan.copy,
     beats: plan.beats.map((beat) => [beat.sceneType, beat.startMs, beat.endMs, beat.title, beat.caption]),
     trace:

@@ -178,6 +178,8 @@ export function lessonPipeline(args: {
   ];
 
   const media = render?.parsed?.media || null;
+  const openingScene = scenes.find((scene) => scene.type === 'open');
+  const closingScene = scenes.find((scene) => scene.type === 'brand');
   const ratio = media ? media.width / media.height : 0;
   const vertical = Boolean(media && Math.abs(ratio - 9 / 16) < 0.01);
   const durationSeconds = totalMs / 1000;
@@ -206,10 +208,13 @@ export function lessonPipeline(args: {
     },
     {
       key: 'brand',
-      label: 'Brand closing scene present',
+      label: 'Personal brand opening and closing',
       kind: 'auto',
-      ok: scenes.some((scene) => scene.type === 'brand'),
-      detail: scenes.some((scene) => scene.type === 'brand') ? 'Visual CS Lab closing scene' : 'Rebuild the storyboard.'
+      ok: Boolean(openingScene && closingScene),
+      detail:
+        openingScene && closingScene
+          ? `Opening ${(openingScene.durationMs / 1000).toFixed(1)}s · closing ${(closingScene.durationMs / 1000).toFixed(1)}s`
+          : 'Regenerate branding to add the branded opening and closing.'
     },
     {
       key: 'voiceover',

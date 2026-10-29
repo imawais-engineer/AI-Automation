@@ -11,7 +11,7 @@
 import type { BinarySearchStep } from '../algorithms/binary-search.ts';
 import type { StackEvent } from '../algorithms/stack.ts';
 
-export type BeatKey = 'intro' | 'setup' | 'op' | 'lifo' | 'complexity' | 'brand';
+export type BeatKey = 'open' | 'intro' | 'setup' | 'op' | 'lifo' | 'complexity' | 'brand';
 
 export type Beat = {
   key: BeatKey;
@@ -43,6 +43,20 @@ export type PlanBrand = {
   ink: string;
   watermark: string;
   outro: string;
+  /** The personal identity on every opening and closing frame. */
+  presenter: string;
+  role: string;
+  closing: string;
+  openingStyle: string;
+};
+
+/** The branded opening: title, kicker and the presenter credit. */
+export type PlanOpening = {
+  title: string;
+  kicker: string;
+  presenter: string;
+  role: string;
+  style: string;
 };
 
 /** One solid value known to the stack: born on a push, retired on a pop. */
@@ -71,6 +85,7 @@ export type StackPlan = {
   durationMs: number;
   brand: PlanBrand;
   copy: PlanCopy;
+  opening: PlanOpening;
   beats: Beat[];
   ops: StackOpWindow[];
   blocks: StackBlock[];
@@ -89,6 +104,7 @@ export type BinaryPlan = {
   durationMs: number;
   brand: PlanBrand;
   copy: PlanCopy;
+  opening: PlanOpening;
   beats: Beat[];
   array: number[];
   target: number;
@@ -119,6 +135,22 @@ function windows(scenes: PlanScene[]): { scene: PlanScene; index: number; startM
     cursor += duration;
     return window;
   });
+}
+
+/**
+ * The opening copy the renderer shows, read from the storyboard's own opening
+ * beat so the title on screen is exactly the title the storyboard stores. The
+ * presenter and the professional title come from the brand row.
+ */
+function openingOf(scenes: PlanScene[], brand: PlanBrand): PlanOpening {
+  const open = scenes.find((scene) => scene.type === 'open');
+  return {
+    title: String(open?.title || '').trim(),
+    kicker: String(open?.subtitle || '').trim(),
+    presenter: brand.presenter || brand.name,
+    role: brand.role || '',
+    style: brand.openingStyle || 'cinematic'
+  };
 }
 
 export function beatAt(beats: Beat[], tMs: number): Beat | null {
@@ -197,15 +229,17 @@ export function buildStackPlan(args: {
     }
 
     const key: BeatKey =
-      scene.type === 'hook'
-        ? 'intro'
-        : scene.type === 'summary'
-          ? 'lifo'
-          : scene.type === 'complexity'
-            ? 'complexity'
-            : scene.type === 'brand'
-              ? 'brand'
-              : 'setup';
+      scene.type === 'open'
+        ? 'open'
+        : scene.type === 'hook'
+          ? 'intro'
+          : scene.type === 'summary'
+            ? 'lifo'
+            : scene.type === 'complexity'
+              ? 'complexity'
+              : scene.type === 'brand'
+                ? 'brand'
+                : 'setup';
 
     beats.push({ key, sceneType: scene.type, startMs, endMs, sceneIndex: index, title: scene.title, caption });
   }
@@ -222,6 +256,7 @@ export function buildStackPlan(args: {
     durationMs: windows(scenes).reduce((sum, item) => sum + (item.endMs - item.startMs), 0),
     brand,
     copy,
+    opening: openingOf(scenes, brand),
     beats,
     ops,
     blocks,
@@ -245,15 +280,17 @@ export function buildBinaryPlan(args: {
 
   for (const { scene, index, startMs, endMs } of windows(scenes)) {
     const key: BeatKey =
-      scene.type === 'hook'
-        ? 'intro'
-        : scene.type === 'trace'
-          ? 'complexity'
-          : scene.type === 'complexity'
+      scene.type === 'open'
+        ? 'open'
+        : scene.type === 'hook'
+          ? 'intro'
+          : scene.type === 'trace'
             ? 'complexity'
-            : scene.type === 'brand'
-              ? 'brand'
-              : 'setup';
+            : scene.type === 'complexity'
+              ? 'complexity'
+              : scene.type === 'brand'
+                ? 'brand'
+                : 'setup';
 
     if (scene.type === 'trace') {
       traceStartMs = startMs;
@@ -286,6 +323,7 @@ export function buildBinaryPlan(args: {
     durationMs: beats.length > 0 ? beats[beats.length - 1].endMs : 0,
     brand,
     copy,
+    opening: openingOf(scenes, brand),
     beats,
     array,
     target,

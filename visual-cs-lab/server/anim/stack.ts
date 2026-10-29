@@ -40,10 +40,12 @@ import {
   footer,
   hudHeader,
   hudOperation,
+  openingReveal,
   paletteOf,
   popCamera,
   pushCamera,
   safeBox,
+  subjectSilhouette,
   toast,
   type Camera,
   type Dims,
@@ -69,6 +71,11 @@ function cameraKeys(plan: StackPlan): { at: number; y: number; zoom: number }[] 
     keys.push({ at: op.endMs - 40, y: camYFor(count), zoom: 1 });
   }
   for (const beat of plan.beats) {
+    if (beat.key === 'open') {
+      // A slow push-in through the opening, so the title sits in a moving frame.
+      keys.push({ at: beat.startMs, y: camYFor(0) + 30, zoom: 1 });
+      keys.push({ at: beat.endMs, y: camYFor(0) - 10, zoom: 1.04 });
+    }
     if (beat.key === 'lifo') {
       const count = plan.ops[plan.ops.length - 1]?.event.items.length ?? 0;
       keys.push({ at: beat.startMs, y: camYFor(count) + 10, zoom: 0.98 });
@@ -532,6 +539,8 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
   const cam = sampleCamera(plan, tMs);
   const brandBeat = plan.beats.find((item) => item.key === 'brand');
   const inBrand = Boolean(brandBeat && tMs >= brandBeat.startMs);
+  const openBeat = plan.beats.find((item) => item.key === 'open');
+  const inOpening = Boolean(openBeat && tMs >= openBeat.startMs && tMs < openBeat.endMs);
   const k = dims.width / 1080;
   // The underflow inset owns the frame in the second half of the complexity beat,
   // so the tower fades out instead of sitting underneath the card.
@@ -547,6 +556,14 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
 
   pushCamera(ctx, dims, cam);
   drawPlatform(ctx, { x: -430, y: FLOOR_Y, w: 860, pal, alpha: (inBrand ? 0.35 : 1) * stageFade });
+  // The opening frames preview the subject as a lit silhouette above the title;
+  // it fades out as the first real block is pushed.
+  if (inOpening && openBeat) {
+    const glow =
+      easeOutCubic(track(tMs, openBeat.startMs + 120, openBeat.startMs + 720)) *
+      (1 - track(tMs, openBeat.endMs - 460, openBeat.endMs));
+    subjectSilhouette(ctx, 'stack', pal, glow * 0.6);
+  }
   const blocks = blocksAt(plan, tMs);
   for (const item of blocks) {
     drawBlock(ctx, {
@@ -586,7 +603,8 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
     ctx.fillRect(item.rect.x - 30, centerY, 16, 2);
   }
 
-  if (!inBrand && stageFade > 0.2) {
+  // The opening owns the frame: no pointer or readout is drawn over the title.
+  if (!inBrand && !inOpening && stageFade > 0.2) {
     const top = topBlockAt(blocks, tMs);
     const platformAnchor: Rect = { x: -300, y: platformSurfaceY - 60, w: 600, h: 60 };
     const anchor = top ? top.rect : anchors.set('platform', platformAnchor);
@@ -626,12 +644,22 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
 
   /* ---------------------------------------------------------------- overlays */
 
-  const headerAlpha = 1 - track(tMs, (brandBeat?.startMs ?? Infinity), (brandBeat?.startMs ?? Infinity) + 300);
+  // Chrome stays off the opening frame and returns as it ends, so the title owns
+  // the screen while it is on it.
+  const openFade = openBeat ? track(tMs, openBeat.endMs - 180, openBeat.endMs + 120) : 1;
+  const headerAlpha = Math.min(
+    1 - track(tMs, (brandBeat?.startMs ?? Infinity), (brandBeat?.startMs ?? Infinity) + 300),
+    openFade
+  );
   hudHeader(ctx, dims, pal, {
-    watermark: plan.brand.watermark || plan.brand.name,
+    watermark: plan.brand.watermark || plan.brand.presenter,
     step: activeOp ? `STEP ${String(activeOp.index + 1).padStart(2, '0')} / ${String(plan.ops.length).padStart(2, '0')}` : 'STACK',
     alpha: headerAlpha
   });
+
+  if (inOpening && openBeat) {
+    openingReveal(ctx, dims, pal, plan.opening, tMs, openBeat);
+  }
 
   const hookBeat = plan.beats.find((item) => item.key === 'intro');
   const setupBeat = plan.beats.find((item) => item.key === 'setup');
@@ -744,7 +772,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
 
   footer(ctx, dims, pal, {
     progress: plan.durationMs > 0 ? tMs / plan.durationMs : 0,
-    mark: plan.brand.watermark || plan.brand.name,
+    mark: plan.brand.watermark || plan.brand.presenter,
     alpha: headerAlpha
   });
 }

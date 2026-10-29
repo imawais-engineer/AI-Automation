@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { api, type Lesson, type Pipeline, type PublishJob, type RenderJob, type RenderValidation } from '../api';
+import {
+  api,
+  thumbnailUrl,
+  type Lesson,
+  type Pipeline,
+  type PublishJob,
+  type RenderJob,
+  type RenderValidation
+} from '../api';
 
 function qualityOf(job: RenderJob): RenderValidation | null {
   if (!job.validation) return null;
@@ -151,6 +159,13 @@ export default function Publishing() {
             </option>
           ))}
         </select>
+        {lesson && (
+          <img
+            className="publish-thumb"
+            src={thumbnailUrl(lesson.id, lesson.updated_at)}
+            alt={`${lesson.title} thumbnail`}
+          />
+        )}
         {lesson && (
           <Link className="btn ghost" to={`/lessons/${lesson.id}`}>
             Open lesson

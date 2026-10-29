@@ -15,8 +15,9 @@ import {
   type BinarySearchConfig,
   type BinarySearchStep
 } from './algorithms/binary-search.ts';
+import { brandingFrom, openingCopy, type Branding } from './branding.ts';
 
-export type SceneType = 'hook' | 'concept' | 'code' | 'execution' | 'trace' | 'complexity' | 'summary' | 'brand';
+export type SceneType = 'open' | 'hook' | 'concept' | 'code' | 'execution' | 'trace' | 'complexity' | 'summary' | 'brand';
 
 export type StackVisual = {
   kind: 'stack';
@@ -223,24 +224,86 @@ export function allocateDurations(weights: number[], totalMs: number): number[] 
   return parts;
 }
 
-function toScenes(specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[], totalMs: number): Scene[] {
+type SceneSpec = { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> };
+type Bookend = Omit<Scene, 'id' | 'durationMs'>;
+
+/** Lays the main beats out inside the time left after the bookends. */
+function layoutBeats(specs: SceneSpec[], totalMs: number): Omit<Scene, 'id'>[] {
   const durations = allocateDurations(
     specs.map((spec) => spec.weight),
     totalMs
   );
-  return specs.map((spec, index) => ({ ...spec.scene, id: `s${index + 1}`, durationMs: durations[index] }));
+  return specs.map((spec, index) => ({ ...spec.scene, durationMs: durations[index] }));
 }
 
 /**
- * Beat weights for a stack short, in seconds of a 45 second video:
- * 3.2 hook · 1.8 setup · 4.2 per verified operation · 3.6 LIFO · 5.0 complexity
- * (which also carries the labelled underflow example) · 2.0 brand.
+ * Assembles one continuous timeline: the branded opening and the branded closing
+ * own their durations first, and the lesson itself is fitted into what is left.
+ *
+ * Nothing is overlaid on top of the original length — every beat, caption and
+ * narration timestamp is derived from these durations, and they add up to exactly
+ * the lesson's selected duration.
+ */
+function withBookends(
+  specs: SceneSpec[],
+  totalMs: number,
+  branding: Branding,
+  bookends: { opening: Bookend; ending: Bookend }
+): Scene[] {
+  const openingMs = Math.round(branding.openingMs);
+  const endingMs = Math.round(branding.endingMs);
+  const mainMs = Math.max(1000, totalMs - openingMs - endingMs);
+  return [
+    { ...bookends.opening, durationMs: openingMs },
+    ...layoutBeats(specs, mainMs),
+    { ...bookends.ending, durationMs: endingMs }
+  ].map((scene, index) => ({ ...scene, id: `s${index + 1}` }));
+}
+
+/** The branded opening beat: the lesson's short title and the presenter credit. */
+function openingScene(branding: Branding, lesson: LessonInput, concept: ConceptInput): Bookend {
+  const copy = openingCopy(lesson, concept, branding);
+  return { type: 'open', title: copy.title, subtitle: copy.kicker, caption: copy.credit };
+}
+
+/** The branded closing beat: presenter, professional title and the closing line. */
+function closingScene(branding: Branding): Bookend {
+  return { type: 'brand', title: branding.presenter, subtitle: branding.role, caption: branding.closing };
+}
+
+/**
+ * The shortest lesson that can hold the opening, a readable lesson and the closing.
+ *
+ * A stack short needs roughly a second per verified operation (plus its fixed
+ * explanation beats); a binary trace needs a few seconds per comparison and a
+ * readable halving panel. Below this the storyboard would still add up, but the
+ * animation would flash past — so it is reported instead of silently compressed.
+ */
+export function minimumDurationMs(branding: Branding, run: ConceptRun): number {
+  const bookends = branding.openingMs + branding.endingMs;
+  if (run.kind === 'binary-search') return bookends + 12000;
+  const ops = Math.max(1, run.events.length);
+  // 12.6 weight units of fixed explanation beats around 4.2 per operation.
+  return bookends + Math.round(((ops * 4.2 + 12.6) / 4.2) * 950);
+}
+
+/**
+ * Beat weights for a stack lesson body, in seconds: 2.2 hook · 1.8 setup ·
+ * 4.2 per verified operation · 3.6 LIFO · 5.0 complexity (which also carries the
+ * labelled underflow example). The branded opening and closing are allocated
+ * separately, before these are fitted into the remaining time.
  *
  * These are beat durations on one continuous animation, not separate slides.
  */
-const STACK_BEAT_SECONDS = { hook: 3.2, setup: 1.8, op: 4.2, lifo: 3.6, complexity: 5.0, brand: 2.0 };
+const STACK_BEAT_SECONDS = { hook: 2.2, setup: 1.8, op: 4.2, lifo: 3.6, complexity: 5.0 };
 
-function buildStackScenes(lesson: LessonInput, concept: ConceptInput, run: ConceptRun, totalMs: number): Scene[] {
+function buildStackScenes(
+  lesson: LessonInput,
+  concept: ConceptInput,
+  run: ConceptRun,
+  totalMs: number,
+  branding: Branding
+): Scene[] {
   const events = run.events;
   const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
     {
@@ -307,22 +370,25 @@ function buildStackScenes(lesson: LessonInput, concept: ConceptInput, run: Conce
           { label: 'Rule', value: 'Only the top element is touched.' }
         ]
       }
-    },
-    {
-      weight: STACK_BEAT_SECONDS.brand,
-      scene: { type: 'brand', title: 'Visual CS Lab', subtitle: 'Code-driven CS animation', caption: '' }
     }
   );
 
-  return toScenes(specs, totalMs);
+  return withBookends(specs, totalMs, branding, {
+    opening: openingScene(branding, lesson, concept),
+    ending: closingScene(branding)
+  });
 }
 
 /**
- * The five-scene binary search storyboard: hook, concept, trace, complexity and
- * takeaway, branded closing. Weights are the 20 second plan (2.5 / 3.5 / 7 / 4 / 3),
- * so a 20 second lesson lands on exactly those durations.
+ * The binary search lesson body: hook, sorted setup, verified trace and the
+ * halving/complexity panel, wrapped by the branded opening and closing.
  */
-function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, totalMs: number): Scene[] {
+function buildBinarySearchScenes(
+  lesson: LessonInput,
+  concept: ConceptInput,
+  totalMs: number,
+  branding: Branding
+): Scene[] {
   const config = readAnimationConfig(concept) as unknown as BinarySearchConfig;
   const run = runConcept(concept);
   const array = Array.isArray(config.array) ? config.array : [];
@@ -337,11 +403,11 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
     steps: []
   };
 
-  // Beat weights, in seconds of a 45 second video: hook 3 · sorted setup 5 ·
-  // verified trace 27.5 · halving/complexity 7 · brand 2.5.
+  // Beat weights for the body, in seconds of a 45 second video: hook 2.5 ·
+  // sorted setup 5 · verified trace 27.5 · halving/complexity 7.
   const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
     {
-      weight: 3,
+      weight: 2.5,
       scene: {
         type: 'hook',
         title: lesson.hook || 'Searching a sorted array? Check the middle first.',
@@ -381,31 +447,31 @@ function buildBinarySearchScenes(lesson: LessonInput, concept: ConceptInput, tot
           { label: 'Precondition', value: 'Input must be sorted' }
         ]
       }
-    },
-    {
-      weight: 2.5,
-      scene: {
-        type: 'brand',
-        title: 'Visual CS Lab',
-        subtitle: "Understand the algorithm. Don't just memorize it.",
-        caption: ''
-      }
     }
   ];
 
-  return toScenes(specs, totalMs);
+  return withBookends(specs, totalMs, branding, {
+    opening: openingScene(branding, lesson, concept),
+    ending: closingScene(branding)
+  });
 }
 
 /**
  * Turns a lesson into the structured scene list the renderer draws. Every scene
  * carries its own duration, so the timeline is data, not code per video.
  */
-export function buildScenes(lesson: LessonInput, conceptRow: ConceptInput): Scene[] {
+export function buildScenes(
+  lesson: LessonInput,
+  conceptRow: ConceptInput,
+  branding: Branding = brandingFrom(null)
+): Scene[] {
   const concept = effectiveConcept(lesson, conceptRow);
   const totalMs = lessonDurationMs(lesson);
   const run = runConcept(concept);
-  if (run.kind === 'binary-search' && run.supported) return buildBinarySearchScenes(lesson, concept, totalMs);
-  return buildStackScenes(lesson, concept, run, totalMs);
+  if (run.kind === 'binary-search' && run.supported) {
+    return buildBinarySearchScenes(lesson, concept, totalMs, branding);
+  }
+  return buildStackScenes(lesson, concept, run, totalMs, branding);
 }
 
 function hasExpectation(config: Record<string, unknown>): boolean {
@@ -451,7 +517,13 @@ export function storyboardHash(scenes: Scene[]): string {
   return createHash('sha1').update(payload).digest('hex');
 }
 
-function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: ConceptRun, seconds: number): string[] {
+function storyboardIssues(
+  lesson: LessonInput,
+  concept: ConceptInput,
+  run: ConceptRun,
+  seconds: number,
+  branding: Branding
+): string[] {
   const issues: string[] = [];
   const stored = safeJson<Scene[]>(lesson.scenes || '[]', []);
   if (stored.length === 0) {
@@ -460,7 +532,7 @@ function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: Conce
 
   // Reordering and duplicating scenes is allowed, so the check is that every
   // scene the plan needs is still present — not that the order is untouched.
-  const required = Array.from(new Set(buildScenes(lesson, concept).map((scene) => scene.type)));
+  const required = Array.from(new Set(buildScenes(lesson, concept, branding).map((scene) => scene.type)));
   const missing = required.filter((type) => !stored.some((scene) => scene.type === type));
   if (missing.length > 0) {
     return [
@@ -491,7 +563,7 @@ function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: Conce
     }
     if (!String(scene.id || '').trim()) issues.push(`${label} is missing its id — rebuild the storyboard.`);
 
-    if (scene.type === 'hook' || scene.type === 'summary' || scene.type === 'brand') {
+    if (scene.type === 'open' || scene.type === 'hook' || scene.type === 'summary' || scene.type === 'brand') {
       if (!String(scene.title || '').trim()) issues.push(`${label} needs its text before it can be rendered.`);
     }
     if (scene.type === 'concept' && !String(scene.subtitle || '').trim()) {
@@ -547,7 +619,11 @@ function storyboardIssues(lesson: LessonInput, concept: ConceptInput, run: Conce
 }
 
 /** Everything that has to be true before a lesson may be rendered. */
-export function lessonIssues(lesson: LessonInput, concept: ConceptInput): string[] {
+export function lessonIssues(
+  lesson: LessonInput,
+  concept: ConceptInput,
+  branding: Branding = brandingFrom(null)
+): string[] {
   const issues: string[] = [];
 
   if (lesson.concept_id && concept.id && lesson.concept_id !== concept.id) {
@@ -583,7 +659,19 @@ export function lessonIssues(lesson: LessonInput, concept: ConceptInput): string
     );
   }
 
-  if (durationValid) issues.push(...storyboardIssues(lesson, effective, run, seconds));
+  if (durationValid) {
+    // A video too short for the bookends and a readable lesson is reported, never
+    // silently compressed: the opening, lesson and closing all have to fit.
+    const neededMs = minimumDurationMs(branding, run);
+    if (Math.round(seconds * 1000) < neededMs) {
+      issues.push(
+        `At ${formatSeconds(seconds * 1000)} there is no room for the ${formatSeconds(branding.openingMs)} opening, ` +
+          `a readable lesson and the ${formatSeconds(branding.endingMs)} closing — raise the duration to at least ` +
+          `${Math.ceil(neededMs / 1000)} seconds.`
+      );
+    }
+    issues.push(...storyboardIssues(lesson, effective, run, seconds, branding));
+  }
 
   return Array.from(new Set(issues));
 }

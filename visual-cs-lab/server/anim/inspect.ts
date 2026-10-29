@@ -17,6 +17,8 @@ import { beginAudit, endAudit, type AuditShape, type Rect } from './audit.ts';
 import { drawMoment } from './index.ts';
 import type { MotionPlan } from './plan.ts';
 import { binaryStateAt, stackStateAt } from './index.ts';
+import { OPENING_SETTLED_MS } from './stage.ts';
+import { openingCaptureMs } from '../branding.ts';
 import { SAFE, type Dims } from './stage.ts';
 
 export type SceneCheck = { id: string; label: string; ok: boolean; detail: string };
@@ -35,7 +37,17 @@ export function sampleTimes(plan: MotionPlan): number[] {
     times.add(Math.max(0, Math.min(plan.durationMs - 1, Math.round(value))));
 
   for (const beat of plan.beats) {
-    if (beat.key === 'brand') continue;
+    if (beat.key === 'open') {
+      // The automatic thumbnail's frame is inspected like any other moment, so a
+      // thumbnail can never be cut from a frame with clipped or unsettled text.
+      push(openingCaptureMs(beat.startMs, beat.endMs, OPENING_SETTLED_MS));
+      push(beat.endMs - 240);
+      continue;
+    }
+    if (beat.key === 'brand') {
+      push(beat.startMs + (beat.endMs - beat.startMs) * 0.85);
+      continue;
+    }
     push(beat.startMs + 260);
     push(beat.startMs + (beat.endMs - beat.startMs) * 0.5);
     push(beat.endMs - 240);
@@ -283,10 +295,94 @@ export function verifyPlanStates(plan: MotionPlan): SceneCheck {
   };
 }
 
-/** Full inspection of a plan: layout geometry plus algorithm state. */
+/** Any trace of the previous channel identity must never reach a frame. */
+const LEGACY_BRAND = /visual\s*cs\s*lab|vs\s*lab|code[- ]driven\s*cs/i;
+
+const normalize = (value: string): string => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+function textsBetween(moments: RecordedMoment[], startMs: number, endMs: number): string[] {
+  return moments
+    .filter((moment) => moment.at >= startMs - 1 && moment.at <= endMs + 1)
+    .flatMap((moment) => moment.shapes.filter((shape) => shape.kind === 'text' && shape.text).map((shape) => shape.text as string));
+}
+
+/**
+ * The personal brand has to be on the frames, not just in the settings: the
+ * opening must show the lesson title and the presenter credit, the closing must
+ * show the name and the professional title, and no frame may carry the old
+ * channel identity.
+ */
+export function verifyBranding(plan: MotionPlan, recorded: { moments: RecordedMoment[] }): SceneCheck {
+  const problems: string[] = [];
+  const openBeat = plan.beats.find((beat) => beat.key === 'open');
+  const closeBeat = plan.beats.find((beat) => beat.key === 'brand');
+  const presenter = normalize(plan.brand.presenter);
+  const role = normalize(plan.brand.role);
+
+  if (!openBeat) problems.push('the short has no branded opening beat');
+  if (!closeBeat) problems.push('the short has no branded closing beat');
+  if (!plan.opening.title) problems.push('the opening has no lesson title');
+  if (!presenter) problems.push('no presenter name is set');
+
+  const legacy: string[] = [];
+  for (const moment of recorded.moments) {
+    for (const shape of moment.shapes) {
+      if (shape.kind !== 'text' || !shape.text) continue;
+      if (LEGACY_BRAND.test(shape.text)) legacy.push(shape.text);
+    }
+  }
+  // Header and footer chrome draw straight to the canvas, so the values that go
+  // into them are checked too — not only what the layout recorder saw.
+  for (const value of [
+    plan.brand.watermark,
+    plan.brand.presenter,
+    plan.brand.role,
+    plan.brand.closing,
+    plan.brand.outro,
+    plan.opening.title,
+    plan.opening.kicker
+  ]) {
+    if (value && LEGACY_BRAND.test(value)) legacy.push(value);
+  }
+  if (legacy.length > 0) problems.push(`old channel branding is still drawn (${legacy[0]})`);
+
+  if (openBeat) {
+    // The thumbnail frame: everything the opening promises must be legible there.
+    const capture = openingCaptureMs(openBeat.startMs, openBeat.endMs, OPENING_SETTLED_MS);
+    const shown = normalize(textsBetween(recorded.moments, capture, capture).join(' '));
+    const title = normalize(plan.opening.title);
+    if (title && !shown.includes(title)) problems.push(`the thumbnail frame does not show the title “${plan.opening.title}”`);
+    if (presenter && !shown.includes(presenter)) problems.push('the thumbnail frame does not show the presenter name');
+    if (role && !shown.includes(role)) problems.push('the thumbnail frame does not show the professional title');
+  }
+
+  if (closeBeat) {
+    const shown = normalize(
+      textsBetween(recorded.moments, closeBeat.startMs, closeBeat.endMs).join(' ')
+    );
+    if (presenter && !shown.includes(presenter)) problems.push('the closing does not show the presenter name');
+    if (role && !shown.includes(role)) problems.push('the closing does not show the professional title');
+  }
+
+  return {
+    id: 'personal_branding',
+    label: 'Personal branding on the opening and closing',
+    ok: problems.length === 0,
+    detail:
+      problems.length === 0
+        ? `“${plan.opening.title}” opening with ${plan.brand.presenter} · closing with name and title · no legacy branding`
+        : problems.slice(0, 3).join('; ')
+  };
+}
+
+/** Full inspection of a plan: layout geometry, branding plus algorithm state. */
 export function inspectPlan(plan: MotionPlan, dims: Dims = { width: 540, height: 960 }): SceneAudit {
   const recorded = recordLayout(plan, dims);
-  const checks = [...judgeLayout(plan, dims, recorded), verifyPlanStates(plan)];
+  const checks = [
+    ...judgeLayout(plan, dims, recorded),
+    verifyPlanStates(plan),
+    verifyBranding(plan, recorded)
+  ];
   const issues = checks.filter((check) => !check.ok).map((check) => `${check.label}: ${check.detail}`);
   return { ok: issues.length === 0, sampled: recorded.sampled, checks, issues };
 }

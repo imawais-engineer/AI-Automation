@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { api, formatBytes, type Lesson, type RenderJob } from '../api';
+import { api, formatBytes, thumbnailUrl, type Lesson, type RenderJob } from '../api';
 import VoiceoverPanel from '../components/VoiceoverPanel';
 import { isActive, parseChecks } from '../useRenderJob';
 
@@ -23,6 +23,7 @@ export default function Videos() {
   const [error, setError] = useState('');
   const [busyLesson, setBusyLesson] = useState<string | null>(null);
   const [scriptFor, setScriptFor] = useState<string | null>(null);
+  const [thumbVersion, setThumbVersion] = useState<Record<string, number>>({});
 
   const load = useCallback(async () => {
     try {
@@ -58,6 +59,44 @@ export default function Videos() {
         method: 'POST',
         body: JSON.stringify({ lessonId, preset })
       });
+      await load();
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusyLesson(null);
+    }
+  };
+
+  const thumbnailFor = (lesson: LessonRow) =>
+    thumbnailUrl(lesson.id, `${lesson.updated_at}-${thumbVersion[lesson.id] ?? 0}`);
+
+  /** Replaces the poster image only — the video itself is untouched. */
+  const replaceThumbnail = async (lessonId: string, file: File) => {
+    setError('');
+    try {
+      const image = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('That image could not be read.'));
+        reader.readAsDataURL(file);
+      });
+      await api(`/api/lessons/${lessonId}/thumbnail`, {
+        method: 'POST',
+        body: JSON.stringify({ image })
+      });
+      setThumbVersion((current) => ({ ...current, [lessonId]: (current[lessonId] ?? 0) + 1 }));
+    } catch (cause) {
+      setError((cause as Error).message);
+    }
+  };
+
+  /** Rebuilds the storyboard on the current branding and recuts the thumbnail. */
+  const rebrand = async (lessonId: string) => {
+    setError('');
+    setBusyLesson(lessonId);
+    try {
+      await api('/api/brand/regenerate', { method: 'POST', body: JSON.stringify({ lessonId }) });
+      setThumbVersion((current) => ({ ...current, [lessonId]: (current[lessonId] ?? 0) + 1 }));
       await load();
     } catch (cause) {
       setError((cause as Error).message);
@@ -110,6 +149,7 @@ export default function Videos() {
                 <video
                   key={playable.id}
                   src={`/api/renders/${playable.id}/stream`}
+                  poster={thumbnailFor(lesson)}
                   controls
                   loop
                   muted
@@ -117,23 +157,19 @@ export default function Videos() {
                   style={{ width: '100%', borderRadius: 12, marginBottom: 10, background: '#000' }}
                 />
               ) : (
-                <div
-                  style={{
-                    width: '100%',
-                    aspectRatio: '9 / 16',
-                    maxHeight: 320,
-                    borderRadius: 12,
-                    border: '1px dashed var(--line)',
-                    display: 'grid',
-                    placeItems: 'center',
-                    color: 'var(--muted)',
-                    fontSize: 12,
-                    marginBottom: 10
-                  }}
-                >
-                  {latest && ACTIVE_STATES.includes(latest.state)
-                    ? `${latest.state} ${Math.round(latest.progress)}%`
-                    : 'no finished render'}
+                <div className="thumb-frame">
+                  <img
+                    src={thumbnailFor(lesson)}
+                    alt={`${lesson.title} thumbnail`}
+                    onError={(event) => {
+                      event.currentTarget.style.visibility = 'hidden';
+                    }}
+                  />
+                  <span className="thumb-caption">
+                    {latest && ACTIVE_STATES.includes(latest.state)
+                      ? `${latest.state} ${Math.round(latest.progress)}%`
+                      : 'no finished render'}
+                  </span>
                 </div>
               )}
 
@@ -161,6 +197,27 @@ export default function Videos() {
                     Download
                   </a>
                 )}
+                <label className="btn ghost" style={{ cursor: 'pointer' }}>
+                  Replace thumbnail
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    style={{ display: 'none' }}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void replaceThumbnail(lesson.id, file);
+                      event.target.value = '';
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => void rebrand(lesson.id)}
+                  disabled={busyLesson === lesson.id}
+                >
+                  Rebrand
+                </button>
                 <button
                   type="button"
                   className={`btn ${scriptFor === lesson.id ? 'primary' : 'ghost'}`}

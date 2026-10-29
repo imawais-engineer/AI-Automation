@@ -13,7 +13,8 @@
 
 import type { SKRSContext2D } from '@napi-rs/canvas';
 
-import { clamp01, easeOutCubic, lerp, track } from './easing.ts';
+import { clamp01, easeInCubic, easeOutCubic, lerp, track } from './easing.ts';
+import { BRAND_DEFAULTS } from '../branding.ts';
 import { recordObject, recordPointer, recordText, type Rect } from './audit.ts';
 import { type Side, anchorEdgePoint, chipEdgePoint, overlapArea, placeChip } from './anchors.ts';
 import { drawText, ellipsize, fitText, textWidth } from '../render/layout.ts';
@@ -40,6 +41,10 @@ export type BrandLike = {
   ink: string;
   watermark: string;
   outro: string;
+  /** The personal identity; the renderer falls back to the brand defaults. */
+  presenter?: string;
+  role?: string;
+  closing?: string;
 };
 
 export function paletteOf(brand: BrandLike): Palette {
@@ -395,6 +400,13 @@ export function drawBlock(ctx: SKRSContext2D, opts: BlockOptions): void {
 
   if (tone === 'ghost') {
     ctx.globalAlpha = alpha * 0.35;
+  }
+
+  // A block at a few percent opacity is not readable, so it carries no value: the
+  // text would otherwise be recorded as a label sitting over the frame.
+  if (alpha < 0.15) {
+    ctx.restore();
+    return;
   }
 
   // The value is data, so it is set in the mono face and fitted to the face.
@@ -873,7 +885,226 @@ export function footer(
   ctx.restore();
 }
 
-/** Restrained brand ending: the mark, the name, one line. */
+/* -------------------------------------------------------------- personal brand */
+
+/**
+ * Motion timings of the opening, in milliseconds from the start of its beat.
+ *
+ * They are absolute rather than fractions of the beat so the composition looks
+ * the same whether the opening is 2.0 or 3.0 seconds: everything has settled by
+ * `OPENING_SETTLED_MS`, which is the moment the automatic thumbnail is taken.
+ */
+export const OPENING_TIMING = {
+  kicker: [80, 360],
+  title: [160, 820],
+  rule: [640, 980],
+  credit: [820, 1120],
+  sweep: [120, 1500]
+} as const;
+
+/** When the title, rule and presenter credit are all fully visible. */
+export const OPENING_SETTLED_MS = 1120;
+
+export type OpeningCopy = {
+  title: string;
+  kicker: string;
+  presenter: string;
+  role: string;
+  style: string;
+};
+
+/**
+ * A dim, lit silhouette of the subject that sits behind the opening title, drawn
+ * in stage space so the camera move carries it. It reads as the data structure
+ * about to be built without competing with the headline.
+ */
+export function subjectSilhouette(
+  ctx: SKRSContext2D,
+  kind: 'stack' | 'binary',
+  pal: Palette,
+  alpha: number
+): void {
+  const a = clamp01(alpha);
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.strokeStyle = rgba(pal.accent, 0.5);
+  ctx.lineWidth = 2.2;
+  ctx.setLineDash([14, 12]);
+  if (kind === 'stack') {
+    for (let i = 0; i < 3; i++) {
+      const w = 420 - i * 26;
+      const y = -520 - i * 116;
+      roundRect(ctx, -w / 2, y, w, 96, 16);
+      ctx.stroke();
+    }
+  } else {
+    const w = 132;
+    for (let i = 0; i < 5; i++) {
+      roundRect(ctx, -5 * (w + 20) / 2 + i * (w + 20), -540, w, 150, 14);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/**
+ * The branded opening: a light sweep across the stage, the lesson's short title
+ * rising into place, an accent rule that draws itself, then the presenter credit
+ * with the professional title underneath.
+ *
+ * The three type roles carry the hierarchy — display for the title and the name,
+ * Inter for the professional title, mono for the kicker.
+ */
+export function openingReveal(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  opening: OpeningCopy,
+  tMs: number,
+  beat: { startMs: number; endMs: number }
+): void {
+  const k = dims.width / DESIGN_W;
+  const at = tMs - beat.startMs;
+  const style = opening.style === 'minimal' || opening.style === 'bold' ? opening.style : 'cinematic';
+  // The whole composition drifts forward and fades over the last moments, so the
+  // algorithm animation underneath takes over without a cut.
+  const outro = 1 - easeInCubic(track(tMs, beat.endMs - 320, beat.endMs));
+  if (outro <= 0.01) return;
+  const push = 1 + (1 - outro) * 0.03;
+
+  const cx = dims.width / 2;
+  const width = dims.width - SAFE * 2 * k;
+
+  // Light sweep: a soft band crossing the stage, the opening's sense of depth.
+  const sweepP = track(at, OPENING_TIMING.sweep[0], OPENING_TIMING.sweep[1]);
+  if (style !== 'minimal' && sweepP > 0 && sweepP < 1) {
+    const x = lerp(-0.5, 1.3, sweepP) * dims.width;
+    const band = ctx.createLinearGradient(x - dims.width * 0.4, 0, x + dims.width * 0.4, dims.height * 0.6);
+    band.addColorStop(0, rgba('#ffffff', 0));
+    band.addColorStop(0.5, rgba(pal.accent, 0.12 * Math.sin(sweepP * Math.PI)));
+    band.addColorStop(1, rgba('#ffffff', 0));
+    ctx.save();
+    ctx.globalAlpha = outro;
+    ctx.fillStyle = band;
+    ctx.fillRect(0, 0, dims.width, dims.height);
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.translate(cx, dims.height * 0.5);
+  ctx.scale(push, push);
+  ctx.translate(-cx, -dims.height * 0.5);
+
+  // Kicker: what kind of lesson this is.
+  const kickerIn = easeOutCubic(track(at, OPENING_TIMING.kicker[0], OPENING_TIMING.kicker[1]));
+  if (opening.kicker && kickerIn > 0.01) {
+    drawChip(ctx, cx, 452 * k, opening.kicker.toUpperCase(), {
+      size: 22 * k,
+      color: pal.accent,
+      align: 'center',
+      alpha: kickerIn * outro,
+      maxWidth: width * 0.8,
+      group: 'open-kicker'
+    });
+  }
+
+  // Title: the lesson's own short title, in the display face.
+  const titleIn = easeOutCubic(track(at, OPENING_TIMING.title[0], OPENING_TIMING.title[1]));
+  const titleGlow = style === 'cinematic' ? 0.55 + 0.15 * Math.sin(at / 620) : 0;
+  const rise = (1 - titleIn) * (style === 'bold' ? 0 : style === 'minimal' ? 18 : 56) * k;
+  const titleText = style === 'bold' ? opening.title.toUpperCase() : opening.title;
+
+  if (titleGlow > 0 && titleIn > 0.01) {
+    const halo = ctx.createRadialGradient(cx, 760 * k, 20, cx, 760 * k, 520 * k);
+    halo.addColorStop(0, rgba(pal.accent, 0.16 * titleGlow * titleIn * outro));
+    halo.addColorStop(1, rgba(pal.accent, 0));
+    ctx.save();
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 380 * k, dims.width, 760 * k);
+    ctx.restore();
+  }
+
+  const titleSize = style === 'bold' ? 124 : style === 'minimal' ? 92 : 112;
+  const fitted = drawText(ctx, titleText, {
+    box: { x: SAFE * k, y: 530 * k + rise, w: width, h: 420 * k },
+    role: 'display',
+    weight: 700,
+    size: titleSize * k,
+    minSize: 54 * k,
+    maxLines: 2,
+    lineHeight: style === 'bold' ? 1.02 : 1.1,
+    align: 'center',
+    valign: 'middle',
+    color: pal.ink,
+    alpha: titleIn * outro,
+    group: 'open-title'
+  });
+
+  const ruleY = 530 * k + rise + (420 * k + fitted.height) / 2 + 46 * k;
+  const ruleIn = easeOutCubic(track(at, OPENING_TIMING.rule[0], OPENING_TIMING.rule[1]));
+  if (ruleIn > 0.01) {
+    const ruleW = (style === 'minimal' ? 120 : 190) * k * ruleIn;
+    ctx.save();
+    ctx.globalAlpha = outro;
+    const ruleGrad = ctx.createLinearGradient(cx - ruleW, 0, cx + ruleW, 0);
+    ruleGrad.addColorStop(0, rgba(pal.accent, 0));
+    ruleGrad.addColorStop(0.5, rgba(pal.accent, 0.95));
+    ruleGrad.addColorStop(1, rgba(pal.accent, 0));
+    ctx.fillStyle = ruleGrad;
+    ctx.fillRect(cx - ruleW, ruleY, ruleW * 2, Math.max(2, 3 * k));
+    ctx.restore();
+  }
+
+  // Presenter credit: the name carries the brand, the professional title supports it.
+  const creditIn = easeOutCubic(track(at, OPENING_TIMING.credit[0], OPENING_TIMING.credit[1]));
+  if (creditIn > 0.01) {
+    const creditY = ruleY + 76 * k + (1 - creditIn) * 22 * k;
+    drawText(ctx, 'PRESENTED BY', {
+      box: { x: SAFE * k, y: creditY, w: width, h: 32 * k },
+      role: 'mono',
+      weight: 400,
+      size: 21 * k,
+      minSize: 16 * k,
+      maxLines: 1,
+      align: 'center',
+      color: rgba(pal.ink, 0.5),
+      alpha: creditIn * outro,
+      group: 'open-credit'
+    });
+    drawText(ctx, opening.presenter, {
+      box: { x: SAFE * k, y: creditY + 42 * k, w: width, h: 70 * k },
+      role: 'display',
+      weight: 600,
+      size: 54 * k,
+      minSize: 34 * k,
+      maxLines: 1,
+      align: 'center',
+      color: pal.ink,
+      alpha: creditIn * outro,
+      group: 'open-presenter'
+    });
+    drawText(ctx, opening.role, {
+      box: { x: SAFE * k, y: creditY + 118 * k, w: width, h: 44 * k },
+      role: 'text',
+      weight: 500,
+      size: 28 * k,
+      minSize: 20 * k,
+      maxLines: 1,
+      align: 'center',
+      color: rgba(pal.accent, 0.85),
+      alpha: creditIn * outro,
+      group: 'open-role'
+    });
+  }
+
+  ctx.restore();
+}
+
+/**
+ * The personal-brand closing: the name settles in, an accent rule draws itself,
+ * the professional title stays secondary and one closing line finishes the short.
+ */
 export function brandEnd(
   ctx: SKRSContext2D,
   dims: Dims,
@@ -883,54 +1114,60 @@ export function brandEnd(
 ): void {
   const k = dims.width / DESIGN_W;
   const p = clamp01(progress);
-  const mark = easeOutCubic(track(p, 0.02, 0.3));
-  const name = easeOutCubic(track(p, 0.14, 0.42));
-  const tag = easeOutCubic(track(p, 0.3, 0.6));
-  const size = 148 * k;
+  const bloom = easeOutCubic(track(p, 0, 0.32));
+  const nameIn = easeOutCubic(track(p, 0.1, 0.46));
+  const ruleIn = easeOutCubic(track(p, 0.26, 0.6));
+  const roleIn = easeOutCubic(track(p, 0.3, 0.64));
+  const closeIn = easeOutCubic(track(p, 0.4, 0.78));
   const cx = dims.width / 2;
-  const baseY = dims.height * 0.44;
   const width = dims.width - SAFE * 2 * k;
+  const nameY = dims.height * 0.42;
+  const rise = (1 - nameIn) * 40 * k;
 
+  // A single pool of light behind the name: the camera has settled, the lesson is over.
+  const halo = ctx.createRadialGradient(cx, nameY + 40 * k, 10, cx, nameY + 40 * k, dims.width * 0.7);
+  halo.addColorStop(0, rgba(pal.accent, 0.16 * bloom));
+  halo.addColorStop(0.55, rgba(pal.violet, 0.05 * bloom));
+  halo.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.save();
-  ctx.globalAlpha = mark;
-  ctx.fillStyle = rgba(pal.accent, 0.14);
-  roundRect(ctx, cx - size / 2, baseY - size / 2, size, size, 34 * k);
-  ctx.fill();
-  ctx.strokeStyle = rgba(pal.accent, 0.6);
-  ctx.lineWidth = 2.4 * k;
-  ctx.stroke();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = fontString('display', 700, 58 * k);
-  ctx.fillStyle = pal.accent;
-  ctx.fillText('VL', cx, baseY + 3 * k);
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, dims.width, dims.height);
   ctx.restore();
 
-  drawText(ctx, brand.name || 'Visual CS Lab', {
-    box: { x: SAFE * k, y: baseY + 150 * k, w: width, h: 92 * k },
+  const scale = 1 + (1 - nameIn) * 0.05;
+  ctx.save();
+  ctx.translate(cx, nameY);
+  ctx.scale(scale, scale);
+  ctx.translate(-cx, -nameY);
+
+  drawText(ctx, brand.presenter || BRAND_DEFAULTS.presenter, {
+    box: { x: SAFE * k, y: nameY - 60 * k + rise, w: width, h: 130 * k },
     role: 'display',
     weight: 700,
-    size: 72 * k,
-    minSize: 40 * k,
-    maxLines: 1,
+    size: 88 * k,
+    minSize: 44 * k,
+    maxLines: 2,
+    lineHeight: 1.08,
     align: 'center',
+    valign: 'middle',
     color: pal.ink,
-    alpha: name,
-    group: 'brand'
+    alpha: nameIn,
+    group: 'brand-name'
   });
 
-  ctx.save();
-  ctx.globalAlpha = name;
-  ctx.strokeStyle = rgba(pal.accent, 0.9);
-  ctx.lineWidth = 4 * k;
-  ctx.beginPath();
-  ctx.moveTo(cx - 120 * k * name, baseY + 282 * k);
-  ctx.lineTo(cx + 120 * k * name, baseY + 282 * k);
-  ctx.stroke();
-  ctx.restore();
+  const ruleY = nameY + 78 * k;
+  if (ruleIn > 0.01) {
+    const ruleW = 96 * k * ruleIn;
+    const ruleGrad = ctx.createLinearGradient(cx - ruleW, 0, cx + ruleW, 0);
+    ruleGrad.addColorStop(0, rgba(pal.accent, 0));
+    ruleGrad.addColorStop(0.5, rgba(pal.accent, 0.95));
+    ruleGrad.addColorStop(1, rgba(pal.accent, 0));
+    ctx.fillStyle = ruleGrad;
+    ctx.fillRect(cx - ruleW, ruleY, ruleW * 2, Math.max(2, 3 * k));
+  }
 
-  drawText(ctx, 'Code-driven CS animation', {
-    box: { x: SAFE * k, y: baseY + 300 * k, w: width, h: 44 * k },
+  drawText(ctx, brand.role || BRAND_DEFAULTS.role, {
+    box: { x: SAFE * k, y: ruleY + 34 * k, w: width, h: 48 * k },
     role: 'text',
     weight: 500,
     size: 32 * k,
@@ -938,25 +1175,25 @@ export function brandEnd(
     maxLines: 1,
     align: 'center',
     color: rgba(pal.ink, 0.72),
-    alpha: tag,
-    group: 'brand'
+    alpha: roleIn,
+    group: 'brand-role'
   });
 
-  if (brand.outro) {
-    drawText(ctx, brand.outro, {
-      box: { x: SAFE * k, y: baseY + 348 * k, w: width, h: 52 * k },
-      role: 'mono',
-      weight: 400,
-      size: 24 * k,
-      minSize: 18 * k,
-      maxLines: 1,
-      align: 'center',
-      color: rgba(pal.accent, 0.9),
-      alpha: tag,
-      group: 'brand',
-      truncateOk: true
-    });
-  }
+  drawText(ctx, brand.closing || brand.outro || '', {
+    box: { x: SAFE * k, y: ruleY + 118 * k, w: width, h: 130 * k },
+    role: 'text',
+    weight: 500,
+    size: 40 * k,
+    minSize: 24 * k,
+    maxLines: 2,
+    lineHeight: 1.32,
+    align: 'center',
+    color: rgba(pal.ink, 0.9),
+    alpha: closeIn,
+    group: 'brand-closing'
+  });
+
+  ctx.restore();
 }
 
 /** Soft fade used between beats so nothing snaps. */

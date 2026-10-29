@@ -10,6 +10,7 @@
 import type { SKRSContext2D } from '@napi-rs/canvas';
 
 import { runConcept, type ConceptInput, type LessonInput, type Scene } from '../scenes.ts';
+import { BRAND_DEFAULTS } from '../branding.ts';
 import { buildBinaryPlan, buildStackPlan, type MotionPlan, type PlanBrand, type PlanCopy } from './plan.ts';
 import { drawStack } from './stack.ts';
 import { drawBinary } from './binary.ts';
@@ -30,6 +31,10 @@ export function planBrand(brand: {
   ink: string;
   watermark: string;
   outro: string;
+  presenter?: string;
+  role?: string;
+  closing_line?: string;
+  opening_style?: string;
 }): PlanBrand {
   return {
     name: brand.name,
@@ -38,7 +43,13 @@ export function planBrand(brand: {
     panel: brand.panel,
     ink: brand.ink,
     watermark: brand.watermark,
-    outro: brand.outro
+    outro: brand.outro,
+    // The personal identity is what the opening and closing frames show; the
+    // template name is only an internal label and never reaches a video frame.
+    presenter: String(brand.presenter || '').trim() || BRAND_DEFAULTS.presenter,
+    role: String(brand.role || '').trim() || BRAND_DEFAULTS.role,
+    closing: String(brand.closing_line || '').trim() || BRAND_DEFAULTS.closing,
+    openingStyle: String(brand.opening_style || '').trim() || 'cinematic'
   };
 }
 

@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 
 import { api, type Brand } from '../api';
 
+const OPENING_STYLES = [
+  { key: 'cinematic', label: 'Cinematic' },
+  { key: 'minimal', label: 'Minimal' },
+  { key: 'bold', label: 'Bold' }
+];
+
 const COLORS = [
   { key: 'accent', label: 'Accent' },
   { key: 'background', label: 'Background' },
@@ -14,6 +20,7 @@ export default function BrandPage() {
   const [draft, setDraft] = useState<Brand | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     api<{ brand: Brand }>('/api/brand')
@@ -42,6 +49,28 @@ export default function BrandPage() {
       setNotice('Brand template saved — the next rendered storyboard uses it.');
     } catch (err) {
       setError((err as Error).message);
+    }
+  }
+
+  /** Applies the saved branding to every existing video. */
+  async function applyToExisting() {
+    setError('');
+    setNotice('');
+    setApplying(true);
+    try {
+      const data = await api<{ rebuilt: number; thumbnails: number; failures: { error: string }[] }>(
+        '/api/brand/regenerate',
+        { method: 'POST', body: JSON.stringify({}) }
+      );
+      setNotice(
+        `Rebuilt ${data.rebuilt} video${data.rebuilt === 1 ? '' : 's'} and recut ${data.thumbnails} thumbnail${
+          data.thumbnails === 1 ? '' : 's'
+        }${data.failures.length ? ` · ${data.failures.length} could not be rebuilt` : ''}.`
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setApplying(false);
     }
   }
 
@@ -191,6 +220,118 @@ export default function BrandPage() {
               />
             </div>
           </div>
+
+          <h2 style={{ marginTop: 24 }}>Personal branding</h2>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Every video opens on this identity — the lesson title, then the presenter credit — and closes on
+            it. The opening title is derived from the lesson's own topic.
+          </p>
+
+          <div className="grid two">
+            <div className="field">
+              <label htmlFor="presenter">Presenter name</label>
+              <input
+                id="presenter"
+                className="input"
+                value={draft.presenter}
+                onChange={(event) => setDraft({ ...draft, presenter: event.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="role">Professional title</label>
+              <input
+                id="role"
+                className="input"
+                value={draft.role}
+                onChange={(event) => setDraft({ ...draft, role: event.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor="closing">Closing line</label>
+            <input
+              id="closing"
+              className="input"
+              value={draft.closing_line}
+              onChange={(event) => setDraft({ ...draft, closing_line: event.target.value })}
+            />
+          </div>
+
+          <div className="grid two">
+            <div className="field">
+              <label htmlFor="opening-seconds">Opening duration (s)</label>
+              <input
+                id="opening-seconds"
+                className="input"
+                type="number"
+                min={2}
+                max={3}
+                step={0.5}
+                value={(draft.opening_ms / 1000).toFixed(1)}
+                onChange={(event) =>
+                  setDraft({ ...draft, opening_ms: Math.round(Number(event.target.value) * 1000) })
+                }
+              />
+              <span className="hint">2–3 seconds, taken from the total duration first.</span>
+            </div>
+            <div className="field">
+              <label htmlFor="ending-seconds">Ending duration (s)</label>
+              <input
+                id="ending-seconds"
+                className="input"
+                type="number"
+                min={2}
+                max={3}
+                step={0.5}
+                value={(draft.ending_ms / 1000).toFixed(1)}
+                onChange={(event) =>
+                  setDraft({ ...draft, ending_ms: Math.round(Number(event.target.value) * 1000) })
+                }
+              />
+              <span className="hint">2–3 seconds, also allocated before the lesson.</span>
+            </div>
+          </div>
+
+          <div className="grid two">
+            <div className="field">
+              <label htmlFor="opening-style">Opening title style</label>
+              <select
+                id="opening-style"
+                className="select"
+                value={draft.opening_style}
+                onChange={(event) => setDraft({ ...draft, opening_style: event.target.value })}
+              >
+                {OPENING_STYLES.map((style) => (
+                  <option key={style.key} value={style.key}>
+                    {style.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="auto-thumbnail">Thumbnail</label>
+              <label className="row" style={{ gap: 8, alignItems: 'center', fontSize: 13 }}>
+                <input
+                  id="auto-thumbnail"
+                  type="checkbox"
+                  checked={Boolean(draft.auto_thumbnail)}
+                  onChange={(event) => setDraft({ ...draft, auto_thumbnail: event.target.checked ? 1 : 0 })}
+                />
+                <span>Generate automatically from the opening frame</span>
+              </label>
+              <span className="hint">Cut once the title and credit are fully visible.</span>
+            </div>
+          </div>
+
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+            <button type="button" className="btn" onClick={applyToExisting} disabled={applying}>
+              {applying ? 'Applying…' : 'Apply to existing videos'}
+            </button>
+            <span className="hint" style={{ margin: 0 }}>
+              Rebuilds each storyboard on these settings and recuts its thumbnail.
+            </span>
+          </div>
         </section>
 
         <aside style={{ display: 'grid', gap: 16 }}>
@@ -221,10 +362,19 @@ export default function BrandPage() {
                   A LIFO container: the last value pushed is the first popped.
                 </div>
               </div>
-              <div style={{ height: 4, background: draft.accent, borderRadius: 4, width: '60%' }} />
+              <div>
+                <div style={{ height: 4, background: draft.accent, borderRadius: 4, width: '48%', marginBottom: 10 }} />
+                <div style={{ fontSize: 9, letterSpacing: 1.4, opacity: 0.55, fontFamily: 'var(--mono)' }}>
+                  PRESENTED BY
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, marginTop: 3 }}>
+                  {draft.presenter || 'Presenter name'}
+                </div>
+                <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{draft.role}</div>
+              </div>
             </div>
             <p style={{ fontSize: 12, color: 'var(--muted)' }}>
-              Approximate preview. Rendered storyboard thumbnails and MP4 frames use these values exactly.
+              Approximate preview. Rendered opening frames, thumbnails and MP4 frames use these values exactly.
             </p>
           </div>
           <div className="card tight">
