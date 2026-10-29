@@ -19,14 +19,11 @@ import { THEMES, themeById } from './themes.ts';
 import {
   assetsOf,
   codeOf,
-  deckOf,
   derivedState,
   preferredAsset,
   quizOf,
   roadmapPositionFor,
-  sectionsOf,
-  slidesOf,
-  type SlideRow
+  sectionsOf
 } from './content.ts';
 import { ensureThumbnail } from './render/thumbnails.ts';
 
@@ -344,8 +341,6 @@ publicApi.get('/learn/lessons/:slug', (req, res) => {
     string,
     unknown
   >;
-  const deck = deckOf(lessonId);
-  const slides: SlideRow[] = deck ? slidesOf(deck.id) : [];
   const audioMode = String(user?.audio_mode || 'silent');
   const asset = preferredAsset(lessonId, audioMode);
   // One selector per audio variant: re-renders of the same mode are still one variant.
@@ -358,6 +353,7 @@ publicApi.get('/learn/lessons/:slug', (req, res) => {
   const bookmarked = user
     ? Boolean(db.prepare('SELECT 1 FROM bookmarks WHERE user_id = ? AND lesson_id = ?').get(user.id, lessonId))
     : false;
+  const derived = derivedState(lessonId);
 
   res.json({
     lesson: {
@@ -394,16 +390,6 @@ publicApi.get('/learn/lessons/:slug', (req, res) => {
       expectedOutput: example.expected_output,
       notes: example.notes
     })),
-    slides: {
-      deck: deck ? { id: deck.id, version: deck.lesson_version, updatedAt: deck.updated_at } : null,
-      items: slides.map((slide) => ({
-        id: slide.id,
-        title: slide.title,
-        body: slide.body,
-        notes: slide.notes,
-        kind: slide.kind
-      }))
-    },
     video: asset
       ? {
           id: asset.id,
@@ -424,7 +410,8 @@ publicApi.get('/learn/lessons/:slug', (req, res) => {
       explanation: question.explanation
     })),
     roadmap: roadmapPositionFor(lessonId),
-    derived: derivedState(lessonId),
+    // Slides are not part of the learner experience, so the deck is not exposed.
+    derived: { videos: derived.videos, narration: derived.narration },
     progress: progressFor(user?.id, lessonId),
     bookmarked,
     guest: !user
@@ -511,7 +498,8 @@ publicApi.post('/learn/progress', requireUser, (req, res) => {
   const lesson = db.prepare("SELECT id FROM lessons WHERE id = ? AND content_status = 'published'").get(lessonId);
   if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
   const state = req.body?.state === 'completed' ? 'completed' : 'started';
-  const mode = ['video', 'slides', 'read'].includes(String(req.body?.mode)) ? String(req.body.mode) : 'video';
+  // The lesson is one tutorial; older records keep their historical mode label.
+  const mode = ['tutorial', 'video', 'read'].includes(String(req.body?.mode)) ? String(req.body.mode) : 'tutorial';
   const section = String(req.body?.section || '').slice(0, 120);
   db.prepare(
     `INSERT INTO lesson_progress (user_id, lesson_id, state, last_mode, last_section, updated_at)

@@ -1,10 +1,10 @@
 /**
  * The unified lesson content layer.
  *
- * One lesson record is canonical. Its slides are derived from the verified
- * storyboard, its video assets are derived from render jobs, and its written
- * material, code examples and practice questions hang off the same lesson id —
- * so the three learner modes can never describe different content.
+ * One lesson record is canonical. Its written material, code examples and
+ * practice questions hang off the same lesson id, and its video assets are
+ * derived from render jobs — so the tutorial the learner reads and the
+ * demonstration they watch can never describe different content.
  *
  * Derived artefacts record the lesson version and source hash they were built
  * from, which is what makes staleness detectable instead of silent.
@@ -292,7 +292,6 @@ export function publishChecks(lessonId: string, opts: { waiveVideo?: boolean } =
   const sections = sectionsOf(lessonId);
   const code = codeOf(lessonId);
   const quiz = quizOf(lessonId);
-  const derived = derivedState(lessonId);
   const objectives = safeJson<string[]>(String(lesson.learning_objectives || '[]'), []);
   const review = db
     .prepare("SELECT * FROM review_records WHERE lesson_id = ? AND decision = 'approved' ORDER BY created_at DESC LIMIT 1")
@@ -306,7 +305,6 @@ export function publishChecks(lessonId: string, opts: { waiveVideo?: boolean } =
     { key: 'example', label: 'Worked example or code', ok: sections.some((section) => section.kind === 'example') || code.length > 0, detail: 'Add an example section or a code example.' },
     { key: 'complexity', label: 'Complexity analysis', ok: Boolean(String(concepts?.complexity_time || '').trim() || String(concepts?.complexity_space || '').trim()), detail: 'State the time or space cost on the concept.' },
     { key: 'quiz', label: 'Knowledge check', ok: quiz.length > 0, detail: 'Add at least one practice question.' },
-    { key: 'slides', label: 'Slides generated', ok: derived.deck.present && !derived.deck.stale, detail: derived.deck.present ? 'Slides are older than the lesson — regenerate them.' : 'Generate the deck from the verified storyboard.' },
     {
       key: 'video',
       label: opts.waiveVideo ? 'Video (waived)' : 'Validated video',

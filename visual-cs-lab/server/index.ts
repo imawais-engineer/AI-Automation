@@ -981,11 +981,13 @@ async function start() {
   // Rendering with a substitute typeface would break every fitted text box, so a
   // missing bundled font stops the server instead of degrading silently.
   assertFontsLoaded();
-  // Published lessons get their derived deck/material once, so all three learner
-  // modes exist for content that predates the learning model.
+  // Content maintenance: media-style lesson titles become the concept name,
+  // lessons without complexity prose get it, and finished renders become assets.
   const derived = ensureDerivedContent();
-  if (derived.decks || derived.assets) {
-    console.log(`derived content: ${derived.decks} deck(s), ${derived.assets} video asset(s)`);
+  if (derived.titles || derived.sections || derived.assets) {
+    console.log(
+      `content upkeep: ${derived.titles} title(s), ${derived.sections} section(s), ${derived.assets} video asset(s)`
+    );
   }
   const server = createServer(app);
   const vite = await createViteServer({
