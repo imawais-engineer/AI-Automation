@@ -4,6 +4,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 import { buildScenes, runConcept, type ConceptInput, type LessonInput } from './scenes.ts';
+import { ensureContentSchema } from './content-schema.ts';
 import { BRAND_DEFAULTS, brandingFrom, type Branding } from './branding.ts';
 
 const DATA_DIR = process.env.DATA_DIR || '/tmp/visual-cs-lab';
@@ -947,6 +948,10 @@ function safeParse(raw: string): Record<string, unknown> | null {
 }
 
 ensureMotionDemos();
+
+// The learning-content model (lessons, slides, assets, progress, roles) is
+// additive and runs once; existing concepts, lessons and renders are migrated.
+ensureContentSchema(db, nowIso());
 
 export type Brand = {
   name: string;

@@ -244,7 +244,7 @@ function complexityPanel(
 
   ctx.save();
   ctx.globalAlpha = panel * (1 - track(p, 0.5, 0.62));
-  ctx.fillStyle = rgba('#050a12', 0.88);
+  ctx.fillStyle = rgba(pal.scrim, 0.88);
   roundRect(ctx, x, y, w, h, 26 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.3);
@@ -318,7 +318,7 @@ function complexityPanel(
   ctx.save();
   ctx.globalAlpha = under;
   ctx.translate(0, rise);
-  ctx.fillStyle = rgba('#080e18', 0.94);
+  ctx.fillStyle = rgba(pal.scrim, 0.94);
   roundRect(ctx, insetX, insetY, insetW, insetH, 30 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.coral, 0.45);
@@ -421,7 +421,7 @@ function lifoOverlay(
 
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = rgba('#050a12', 0.86);
+  ctx.fillStyle = rgba(pal.scrim, 0.86);
   roundRect(ctx, cardX, cardY, cardW, cardH, 24 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.28);

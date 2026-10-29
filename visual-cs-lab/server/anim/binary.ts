@@ -409,7 +409,7 @@ function halvingPanel(
 
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = rgba('#050a12', 0.9);
+  ctx.fillStyle = rgba(pal.scrim, 0.9);
   roundRect(ctx, x, y, w, h, 28 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.28);

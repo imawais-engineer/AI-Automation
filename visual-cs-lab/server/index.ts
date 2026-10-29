@@ -40,9 +40,19 @@ import {
   type RenderJob
 } from './render/jobs.ts';
 
+import { attachUser, requireAction } from './auth.ts';
+import { adminApi } from './admin-api.ts';
+import { publicApi } from './public-api.ts';
+
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
 app.use(express.json({ limit: '3mb' }));
+// Every request knows who is asking; each protected route then decides.
+app.use(attachUser);
+// Public learning platform: published content only, learner writes gated.
+app.use('/api', publicApi);
+// Admin Studio: role-gated per route.
+app.use('/api/admin', adminApi);
 
 const CONCEPT_FIELDS = [
   'name', 'category', 'summary', 'objectives', 'prerequisites', 'plain_explanation',
@@ -83,7 +93,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'visual-cs-lab', fonts: fonts.ok, time: nowIso() });
 });
 
-app.get('/api/overview', (_req, res) => {
+app.get('/api/overview', requireAction('content:read'), (_req, res) => {
   const one = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
   const recentLessons = db
     .prepare(
@@ -146,7 +156,7 @@ app.get('/api/overview', (_req, res) => {
 
 /* ------------------------------------------------------------------ concepts */
 
-app.get('/api/concepts', (req, res) => {
+app.get('/api/concepts', requireAction('content:read'), (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   const category = String(req.query.category || '').trim();
   const archived = req.query.archived === '1';
@@ -161,7 +171,7 @@ app.get('/api/concepts', (req, res) => {
   res.json({ concepts: rows });
 });
 
-app.post('/api/concepts', (req, res) => {
+app.post('/api/concepts', requireAction('content:write'), (req, res) => {
   const body = req.body as Record<string, unknown>;
   const name = String(body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'A concept needs a name.' });
@@ -187,7 +197,7 @@ app.post('/api/concepts', (req, res) => {
   res.status(201).json({ concept: db.prepare('SELECT * FROM concepts WHERE id = ?').get(id) });
 });
 
-app.get('/api/concepts/:id', (req, res) => {
+app.get('/api/concepts/:id', requireAction('content:read'), (req, res) => {
   const concept = requireConcept(req.params.id);
   if (!concept) return res.status(404).json({ error: 'Concept not found.' });
   const lessons = db
@@ -210,7 +220,7 @@ app.get('/api/concepts/:id', (req, res) => {
   });
 });
 
-app.patch('/api/concepts/:id', (req, res) => {
+app.patch('/api/concepts/:id', requireAction('content:write'), (req, res) => {
   const concept = requireConcept(req.params.id);
   if (!concept) return res.status(404).json({ error: 'Concept not found.' });
   const patch = pick(req.body as Record<string, unknown>, CONCEPT_FIELDS);
@@ -222,7 +232,7 @@ app.patch('/api/concepts/:id', (req, res) => {
   res.json({ concept: db.prepare('SELECT * FROM concepts WHERE id = ?').get(req.params.id) });
 });
 
-app.post('/api/concepts/:id/duplicate', (req, res) => {
+app.post('/api/concepts/:id/duplicate', requireAction('content:write'), (req, res) => {
   const concept = requireConcept(req.params.id);
   if (!concept) return res.status(404).json({ error: 'Concept not found.' });
   const source = db.prepare('SELECT * FROM concepts WHERE id = ?').get(req.params.id) as Record<string, unknown>;
@@ -245,7 +255,7 @@ app.post('/api/concepts/:id/duplicate', (req, res) => {
   res.status(201).json({ concept: db.prepare('SELECT * FROM concepts WHERE id = ?').get(id) });
 });
 
-app.post('/api/concepts/:id/archive', (req, res) => {
+app.post('/api/concepts/:id/archive', requireAction('content:write'), (req, res) => {
   const archived = req.body?.archived === false ? 0 : 1;
   const result = db
     .prepare('UPDATE concepts SET archived = ?, updated_at = ? WHERE id = ?')
@@ -254,7 +264,7 @@ app.post('/api/concepts/:id/archive', (req, res) => {
   res.json({ ok: true, archived: Boolean(archived) });
 });
 
-app.post('/api/concepts/:id/trace', (req, res) => {
+app.post('/api/concepts/:id/trace', requireAction('content:write'), (req, res) => {
   const concept = requireConcept(req.params.id);
   if (!concept) return res.status(404).json({ error: 'Concept not found.' });
 
@@ -288,7 +298,7 @@ app.post('/api/concepts/:id/trace', (req, res) => {
 
 /* ------------------------------------------------------------------- lessons */
 
-app.get('/api/lessons', (req, res) => {
+app.get('/api/lessons', requireAction('content:read'), (req, res) => {
   const conceptId = String(req.query.conceptId || '');
   const rows = db
     .prepare(
@@ -301,7 +311,7 @@ app.get('/api/lessons', (req, res) => {
   res.json({ lessons: rows });
 });
 
-app.post('/api/lessons', (req, res) => {
+app.post('/api/lessons', requireAction('content:write'), (req, res) => {
   const body = req.body as Record<string, unknown>;
   const conceptId = String(body.conceptId || '');
   const concept = requireConcept(conceptId);
@@ -325,7 +335,7 @@ app.post('/api/lessons', (req, res) => {
   res.status(201).json({ lesson: requireLesson(id) });
 });
 
-app.get('/api/lessons/:id', (req, res) => {
+app.get('/api/lessons/:id', requireAction('content:read'), (req, res) => {
   const lesson = requireLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
   const concept = requireConcept(lesson.concept_id);
@@ -352,7 +362,7 @@ app.get('/api/lessons/:id', (req, res) => {
   });
 });
 
-app.patch('/api/lessons/:id', (req, res) => {
+app.patch('/api/lessons/:id', requireAction('content:write'), (req, res) => {
   const lesson = requireLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
   const patch = pick(req.body as Record<string, unknown>, LESSON_FIELDS);
@@ -368,7 +378,7 @@ app.patch('/api/lessons/:id', (req, res) => {
   res.json({ lesson: requireLesson(req.params.id) });
 });
 
-app.post('/api/lessons/:id/storyboard', (req, res) => {
+app.post('/api/lessons/:id/storyboard', requireAction('content:write'), (req, res) => {
   const bundle = lessonBundle(req.params.id);
   if (!bundle) return res.status(404).json({ error: 'Lesson not found.' });
   const branding = readBranding();
@@ -388,14 +398,14 @@ app.post('/api/lessons/:id/storyboard', (req, res) => {
   });
 });
 
-app.get('/api/lessons/:id/scenes', (req, res) => {
+app.get('/api/lessons/:id/scenes', requireAction('content:read'), (req, res) => {
   const scenes = scenesFor(req.params.id);
   if (!scenes) return res.status(404).json({ error: 'Lesson not found.' });
   res.json({ scenes });
 });
 
 /** Edits scene timings and captions; the renderer reads the stored storyboard. */
-app.patch('/api/lessons/:id/scenes', (req, res) => {
+app.patch('/api/lessons/:id/scenes', requireAction('content:write'), (req, res) => {
   const lesson = requireLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
   const concept = requireConcept(lesson.concept_id);
@@ -462,7 +472,7 @@ app.patch('/api/lessons/:id/scenes', (req, res) => {
 });
 
 /** Duplicates one scene directly after itself, so a beat can be repeated. */
-app.post('/api/lessons/:id/scenes/:sceneId/duplicate', (req, res) => {
+app.post('/api/lessons/:id/scenes/:sceneId/duplicate', requireAction('content:write'), (req, res) => {
   const lesson = requireLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
   const concept = requireConcept(lesson.concept_id);
@@ -490,7 +500,7 @@ app.post('/api/lessons/:id/scenes/:sceneId/duplicate', (req, res) => {
 /* ---------------------------------------------------------------- voice-over */
 
 /** The stored script plus its freshness and accuracy checks. */
-app.get('/api/lessons/:id/voiceover', (req, res) => {
+app.get('/api/lessons/:id/voiceover', requireAction('content:read'), (req, res) => {
   if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
   const status = voiceoverState(req.params.id);
   res.json({
@@ -500,7 +510,7 @@ app.get('/api/lessons/:id/voiceover', (req, res) => {
 });
 
 /** Generates or regenerates the script — no video render is needed for this. */
-app.post('/api/lessons/:id/voiceover', (req, res) => {
+app.post('/api/lessons/:id/voiceover', requireAction('content:write'), (req, res) => {
   if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
   const result = generateVoiceoverFor(req.params.id);
   if (result.error) return res.status(400).json({ error: result.error });
@@ -512,7 +522,7 @@ app.post('/api/lessons/:id/voiceover', (req, res) => {
 });
 
 /** Saves wording edits to the narration of each scene. */
-app.patch('/api/lessons/:id/voiceover', (req, res) => {
+app.patch('/api/lessons/:id/voiceover', requireAction('content:write'), (req, res) => {
   if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
   const raw = Array.isArray(req.body?.segments) ? (req.body.segments as unknown[]) : null;
   if (!raw) return res.status(400).json({ error: 'Send the edited segments as an array.' });
@@ -530,14 +540,14 @@ app.patch('/api/lessons/:id/voiceover', (req, res) => {
 });
 
 /** Layout, pointer and algorithm-state inspection of the stored storyboard. */
-app.get('/api/lessons/:id/inspect', (req, res) => {
+app.get('/api/lessons/:id/inspect', requireAction('content:read'), (req, res) => {
   const built = motionForLesson(req.params.id);
   if (!built) return res.status(400).json({ error: 'Build the storyboard first — there is no plan to inspect.' });
   const audit = inspectPlan(built.motion);
   res.json({ audit });
 });
 
-app.get('/api/lessons/:id/scene/:index.png', (req, res) => {
+app.get('/api/lessons/:id/scene/:index.png', requireAction('content:read'), (req, res) => {
   const index = Number(req.params.index);
   if (!Number.isInteger(index) || index < 0) return res.status(400).end();
   const requested = Number(req.query.w);
@@ -550,7 +560,7 @@ app.get('/api/lessons/:id/scene/:index.png', (req, res) => {
 });
 
 /** Real motion preview of a single scene, encoded at preview resolution and cached. */
-app.get('/api/lessons/:id/scene/:index/clip.mp4', async (req, res) => {
+app.get('/api/lessons/:id/scene/:index/clip.mp4', requireAction('content:read'), async (req, res) => {
   const index = Number(req.params.index);
   if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid scene index.' });
   const result = await sceneClip(req.params.id, index, 540);
@@ -562,11 +572,11 @@ app.get('/api/lessons/:id/scene/:index/clip.mp4', async (req, res) => {
 
 /* --------------------------------------------------------------------- brand */
 
-app.get('/api/brand', (_req, res) => {
+app.get('/api/brand', requireAction('content:read'), (_req, res) => {
   res.json({ brand: readBrand() });
 });
 
-app.patch('/api/brand', (req, res) => {
+app.patch('/api/brand', requireAction('content:write'), (req, res) => {
   const fields = [
     'name', 'accent', 'background', 'panel', 'ink', 'font_family', 'watermark',
     'caption_style', 'code_style', 'default_duration', 'default_resolution', 'intro', 'outro',
@@ -588,7 +598,7 @@ app.patch('/api/brand', (req, res) => {
  * narration timestamp is recalculated) and its thumbnail is recut from the new
  * opening frame. Manual scene timing edits are replaced by this rebuild.
  */
-app.post('/api/brand/regenerate', (req, res) => {
+app.post('/api/brand/regenerate', requireAction('render:run'), (req, res) => {
   const branding = readBranding();
   const lessonId = String(req.body?.lessonId || '');
   const rows = db
@@ -627,7 +637,7 @@ app.post('/api/brand/regenerate', (req, res) => {
 /* --------------------------------------------------------------- thumbnails */
 
 /** The poster image for a video, generated from its own opening frame on demand. */
-app.get('/api/lessons/:id/thumbnail.png', (req, res) => {
+app.get('/api/lessons/:id/thumbnail.png', requireAction('content:read'), (req, res) => {
   if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
   const result = ensureThumbnail(req.params.id);
   if (!result.file) return res.status(404).json({ error: result.error || 'No thumbnail available.' });
@@ -638,7 +648,7 @@ app.get('/api/lessons/:id/thumbnail.png', (req, res) => {
 });
 
 /** Replaces the thumbnail without touching the video. */
-app.post('/api/lessons/:id/thumbnail', async (req, res) => {
+app.post('/api/lessons/:id/thumbnail', requireAction('content:write'), async (req, res) => {
   if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
   const result = await saveManualThumbnail(req.params.id, String(req.body?.image || ''));
   if (result.error) return res.status(400).json({ error: result.error });
@@ -646,7 +656,7 @@ app.post('/api/lessons/:id/thumbnail', async (req, res) => {
 });
 
 /** Recuts the automatic thumbnail from the current opening frame. */
-app.post('/api/lessons/:id/thumbnail/auto', (req, res) => {
+app.post('/api/lessons/:id/thumbnail/auto', requireAction('content:write'), (req, res) => {
   if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
   const result = ensureThumbnail(req.params.id, { force: true });
   if (!result.file) return res.status(400).json({ error: result.error || 'No thumbnail available.' });
@@ -687,7 +697,7 @@ const ALGORITHMS = [
 ];
 
 /** What the Create screen offers: verified algorithms and their default inputs. */
-app.get('/api/algorithms', (_req, res) => {
+app.get('/api/algorithms', requireAction('content:read'), (_req, res) => {
   const brand = readBrand();
   const algorithms = ALGORITHMS.map((algorithm) => {
     const concept = conceptBySlug(algorithm.slug);
@@ -715,7 +725,7 @@ app.get('/api/algorithms', (_req, res) => {
  * implementation, store the animation input on a new lesson, build its beat
  * windows and report anything that would block a render.
  */
-app.post('/api/create', (req, res) => {
+app.post('/api/create', requireAction('content:write'), (req, res) => {
   const body = (req.body || {}) as Record<string, unknown>;
   const algorithm = String(body.algorithm || 'stacks');
   const spec = ALGORITHMS.find((item) => item.slug === algorithm || item.kind === algorithm);
@@ -825,7 +835,7 @@ app.post('/api/create', (req, res) => {
 
 /* ------------------------------------------------------------------- renders */
 
-app.post('/api/renders', (req, res) => {
+app.post('/api/renders', requireAction('render:run'), (req, res) => {
   const lessonId = String(req.body?.lessonId || '');
   const preset = String(req.body?.preset || 'hd') as Preset;
   const result = createJob(lessonId, preset);
@@ -833,7 +843,7 @@ app.post('/api/renders', (req, res) => {
   res.status(201).json({ job: result.job });
 });
 
-app.get('/api/renders', (req, res) => {
+app.get('/api/renders', requireAction('content:read'), (req, res) => {
   const lessonId = String(req.query.lessonId || '');
   const jobs = db
     .prepare(
@@ -846,26 +856,26 @@ app.get('/api/renders', (req, res) => {
   res.json({ renders: jobs });
 });
 
-app.get('/api/renders/:id', (req, res) => {
+app.get('/api/renders/:id', requireAction('content:read'), (req, res) => {
   const job = db.prepare('SELECT * FROM render_jobs WHERE id = ?').get(req.params.id) as RenderJob | undefined;
   if (!job) return res.status(404).json({ error: 'Render job not found.' });
   res.json({ job, validation: parseValidation(job.validation) });
 });
 
-app.post('/api/renders/:id/retry', (req, res) => {
+app.post('/api/renders/:id/retry', requireAction('render:run'), (req, res) => {
   const result = retryJob(req.params.id);
   if (result.error) return res.status(400).json({ error: result.error });
   res.json({ job: result.job });
 });
 
-app.post('/api/renders/:id/cancel', (req, res) => {
+app.post('/api/renders/:id/cancel', requireAction('render:run'), (req, res) => {
   const result = cancelJob(req.params.id);
   if (result.error) return res.status(400).json({ error: result.error });
   res.json({ job: result.job });
 });
 
 /** Inline playback for the preview player; the download route stays a download. */
-app.get('/api/renders/:id/stream', (req, res) => {
+app.get('/api/renders/:id/stream', requireAction('content:read'), (req, res) => {
   const job = db.prepare('SELECT * FROM render_jobs WHERE id = ?').get(req.params.id) as RenderJob | undefined;
   if (!job || job.state !== 'done' || !job.output_path) {
     return res.status(404).json({ error: 'This render has no finished MP4 yet.' });
@@ -875,7 +885,7 @@ app.get('/api/renders/:id/stream', (req, res) => {
   res.sendFile(job.output_path);
 });
 
-app.get('/api/renders/:id/video', (req, res) => {
+app.get('/api/renders/:id/video', requireAction('content:read'), (req, res) => {
   const job = db.prepare('SELECT * FROM render_jobs WHERE id = ?').get(req.params.id) as RenderJob | undefined;
   if (!job || job.state !== 'done' || !job.output_path) {
     return res.status(404).json({ error: 'This render has no finished MP4 yet.' });
@@ -890,7 +900,7 @@ app.get('/api/renders/:id/video', (req, res) => {
 
 /* ---------------------------------------------------------------- publishing */
 
-app.get('/api/publishes', (_req, res) => {
+app.get('/api/publishes', requireAction('content:read'), (_req, res) => {
   const publishes = db
     .prepare(
       `SELECT publish_jobs.*, lessons.title AS lesson_title
@@ -901,7 +911,7 @@ app.get('/api/publishes', (_req, res) => {
   res.json({ publishes });
 });
 
-app.post('/api/publishes', (req, res) => {
+app.post('/api/publishes', requireAction('content:publish'), (req, res) => {
   const body = req.body as Record<string, unknown>;
   const lessonId = String(body.lessonId || '');
   const platform = String(body.platform || '');
@@ -934,7 +944,7 @@ app.post('/api/publishes', (req, res) => {
   res.status(201).json({ publish: db.prepare('SELECT * FROM publish_jobs WHERE id = ?').get(id) });
 });
 
-app.patch('/api/publishes/:id', (req, res) => {
+app.patch('/api/publishes/:id', requireAction('content:publish'), (req, res) => {
   const existing = db.prepare('SELECT * FROM publish_jobs WHERE id = ?').get(req.params.id) as
     | Record<string, unknown>
     | undefined;
@@ -958,7 +968,7 @@ app.patch('/api/publishes/:id', (req, res) => {
   res.json({ publish: db.prepare('SELECT * FROM publish_jobs WHERE id = ?').get(req.params.id) });
 });
 
-app.delete('/api/publishes/:id', (req, res) => {
+app.delete('/api/publishes/:id', requireAction('content:publish'), (req, res) => {
   const result = db.prepare('DELETE FROM publish_jobs WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Publishing entry not found.' });
   res.json({ ok: true });
@@ -970,6 +980,12 @@ async function start() {
   // Rendering with a substitute typeface would break every fitted text box, so a
   // missing bundled font stops the server instead of degrading silently.
   assertFontsLoaded();
+  // Published lessons get their derived deck/material once, so all three learner
+  // modes exist for content that predates the learning model.
+  const derived = ensureDerivedContent();
+  if (derived.decks || derived.assets) {
+    console.log(`derived content: ${derived.decks} deck(s), ${derived.assets} video asset(s)`);
+  }
   const server = createServer(app);
   const vite = await createViteServer({
     configFile: path.resolve(process.cwd(), 'vite.config.ts'),

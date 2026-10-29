@@ -51,7 +51,7 @@ export default function Concepts() {
         body: JSON.stringify(form)
       });
       setForm({ name: '', category: form.category, summary: '' });
-      window.location.href = `/concepts/${data.concept.id}`;
+      window.location.href = `/admin/concepts/${data.concept.id}`;
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -122,14 +122,14 @@ export default function Concepts() {
                   {items.map((concept) => (
                     <tr key={concept.id}>
                       <td>
-                        <Link to={`/concepts/${concept.id}`}>{concept.name}</Link>
+                        <Link to={`/admin/concepts/${concept.id}`}>{concept.name}</Link>
                       </td>
                       <td style={{ color: 'var(--muted)', maxWidth: 380 }}>{concept.summary}</td>
                       <td className="mono" style={{ fontSize: 12 }}>
                         {concept.complexity_time || '—'}
                       </td>
                       <td>
-                        <Link className="btn ghost" to={`/concepts/${concept.id}`}>
+                        <Link className="btn ghost" to={`/admin/concepts/${concept.id}`}>
                           Open
                         </Link>
                       </td>

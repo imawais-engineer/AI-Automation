@@ -112,7 +112,7 @@ export default function Videos() {
           <h1>Videos</h1>
           <div className="sub">Preview, export and download the silent vertical shorts.</div>
         </div>
-        <Link className="btn primary" to="/create">
+        <Link className="btn primary" to="/admin/create">
           + New video
         </Link>
       </div>
@@ -225,7 +225,7 @@ export default function Videos() {
                 >
                   Voice-over Script
                 </button>
-                <Link className="btn ghost" to={`/lessons/${lesson.id}`}>
+                <Link className="btn ghost" to={`/admin/lessons/${lesson.id}`}>
                   Edit
                 </Link>
               </div>

@@ -77,7 +77,7 @@ export default function ConceptDetail() {
         method: 'POST',
         body: JSON.stringify({ conceptId: id })
       });
-      navigate(`/lessons/${data.lesson.id}`);
+      navigate(`/admin/lessons/${data.lesson.id}`);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -105,7 +105,7 @@ export default function ConceptDetail() {
       <header className="page-head">
         <div>
           <div className="row" style={{ marginBottom: 6 }}>
-            <Link to="/concepts" style={{ fontSize: 12 }}>
+            <Link to="/admin/concepts" style={{ fontSize: 12 }}>
               ← Concept library
             </Link>
             <span className="badge">{detail.concept.category}</span>
@@ -261,7 +261,7 @@ export default function ConceptDetail() {
           <div className="card tight">
             <div className="row" style={{ justifyContent: 'space-between' }}>
               <h3>Lessons</h3>
-              <Link to="/lessons" style={{ fontSize: 12 }}>
+              <Link to="/admin/lessons" style={{ fontSize: 12 }}>
                 All
               </Link>
             </div>
@@ -273,7 +273,7 @@ export default function ConceptDetail() {
                   {detail.lessons.map((lesson) => (
                     <tr key={lesson.id}>
                       <td>
-                        <Link to={`/lessons/${lesson.id}`}>{lesson.title}</Link>
+                        <Link to={`/admin/lessons/${lesson.id}`}>{lesson.title}</Link>
                       </td>
                       <td>
                         <span className="badge">{lesson.review_status.replace('_', ' ')}</span>

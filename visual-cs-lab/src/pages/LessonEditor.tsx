@@ -287,10 +287,10 @@ export default function LessonEditor() {
       <header className="page-head">
         <div>
           <div className="row" style={{ marginBottom: 6 }}>
-            <Link to="/lessons" style={{ fontSize: 12 }}>
+            <Link to="/admin/lessons" style={{ fontSize: 12 }}>
               ← Lessons
             </Link>
-            <Link to={`/concepts/${detail.concept.id}`} className="badge">
+            <Link to={`/admin/concepts/${detail.concept.id}`} className="badge">
               {detail.concept.name}
             </Link>
             <span className="badge">{draft.review_status?.replace('_', ' ')}</span>
@@ -459,7 +459,7 @@ export default function LessonEditor() {
           <div className="card tight">
             <div className="row" style={{ justifyContent: 'space-between' }}>
               <h3>Render jobs</h3>
-              <Link to="/renders" style={{ fontSize: 12 }}>
+              <Link to="/admin/renders" style={{ fontSize: 12 }}>
                 Manager
               </Link>
             </div>

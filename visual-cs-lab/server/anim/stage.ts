@@ -18,7 +18,7 @@ import { BRAND_DEFAULTS } from '../branding.ts';
 import { recordObject, recordPointer, recordText, type Rect } from './audit.ts';
 import { type Side, anchorEdgePoint, chipEdgePoint, overlapArea, placeChip } from './anchors.ts';
 import { drawText, ellipsize, fitText, textWidth } from '../render/layout.ts';
-import { mix, rgba, roundRect } from '../render/paint.ts';
+import { hexToRgb, mix, rgba, roundRect } from '../render/paint.ts';
 import { fontString, type FontRole } from '../render/typography.ts';
 
 export type Dims = { width: number; height: number };
@@ -31,7 +31,21 @@ export type Palette = {
   accent: string;
   coral: string;
   violet: string;
+  /** True when the surface is darker than its ink (the original stage). */
+  dark: boolean;
+  /**
+   * The card colour drawn behind body text. A dark theme keeps the original
+   * near-black strip; a light theme needs a paper-coloured strip, otherwise dark
+   * ink would sit on a dark card.
+   */
+  scrim: string;
 };
+
+/** Relative luminance, enough to decide which side of the palette is the surface. */
+function luminance(hex: string): number {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
 
 export type BrandLike = {
   name: string;
@@ -48,13 +62,19 @@ export type BrandLike = {
 };
 
 export function paletteOf(brand: BrandLike): Palette {
+  const bg = brand.background || '#0b1220';
+  const ink = brand.ink || '#e6edf7';
+  const dark = luminance(bg) < luminance(ink);
   return {
-    bg: brand.background || '#0b1220',
+    bg,
     panel: brand.panel || '#141c2e',
-    ink: brand.ink || '#e6edf7',
+    ink,
     accent: brand.accent || '#22d3ee',
     coral: '#ff8a70',
-    violet: '#a78bfa'
+    violet: '#a78bfa',
+    dark,
+    // A dark theme keeps the exact strip the renderer shipped with.
+    scrim: dark ? '#050a12' : mix(bg, '#ffffff', 0.82)
   };
 }
 
@@ -160,9 +180,17 @@ export function backdrop(
   const horizon = opts.horizon ?? -260;
 
   const base = ctx.createLinearGradient(0, 0, 0, H);
-  base.addColorStop(0, mix(pal.bg, '#02040a', 0.55));
-  base.addColorStop(0.55, mix(pal.bg, '#060a13', 0.2));
-  base.addColorStop(1, mix(pal.bg, '#000000', 0.35));
+  if (pal.dark) {
+    base.addColorStop(0, mix(pal.bg, '#02040a', 0.55));
+    base.addColorStop(0.55, mix(pal.bg, '#060a13', 0.2));
+    base.addColorStop(1, mix(pal.bg, '#000000', 0.35));
+  } else {
+    // A light theme keeps the same structure but darkens away from white, so the
+    // paper surface still reads as a lit room instead of washing out to blank.
+    base.addColorStop(0, mix(pal.bg, '#ffffff', 0.55));
+    base.addColorStop(0.55, mix(pal.bg, '#ffffff', 0.18));
+    base.addColorStop(1, mix(pal.bg, '#7f8a86', 0.22));
+  }
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, W, H);
 
@@ -203,7 +231,9 @@ export function backdrop(
   // Vignette keeps overlays readable over the glow.
   const vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.82);
   vignette.addColorStop(0, 'rgba(0,0,0,0)');
-  vignette.addColorStop(1, 'rgba(0,0,0,0.6)');
+  // A light surface vignettes toward paper, not toward black: darkening the
+  // edges of a light theme would fight the dark ink drawn on top of it.
+  vignette.addColorStop(1, pal.dark ? 'rgba(0,0,0,0.6)' : rgba('#ffffff', 0.55));
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, W, H);
 }
@@ -831,7 +861,7 @@ export function captionBar(
 
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = rgba('#050810', 0.8);
+  ctx.fillStyle = rgba(pal.scrim, 0.8);
   roundRect(ctx, S, top, dims.width - S * 2, cardH, 22 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.2);
@@ -1212,7 +1242,7 @@ export function curtain(ctx: SKRSContext2D, dims: Dims, pal: Palette, alpha: num
   if (a <= 0.001) return;
   ctx.save();
   ctx.globalAlpha = a;
-  ctx.fillStyle = mix(pal.bg, '#000000', 0.4);
+  ctx.fillStyle = pal.dark ? mix(pal.bg, '#000000', 0.4) : mix(pal.bg, '#ffffff', 0.5);
   ctx.fillRect(0, 0, dims.width, dims.height);
   ctx.restore();
 }

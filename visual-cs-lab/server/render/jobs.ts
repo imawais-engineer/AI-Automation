@@ -9,9 +9,10 @@ import ffmpegPath from 'ffmpeg-static';
 import { db, newId, nowIso, readBrand, readBranding, type Brand } from '../db.ts';
 import { effectiveConcept, lessonIssues, safeJson, type Scene } from '../scenes.ts';
 import { ensureThumbnail } from './thumbnails.ts';
+import type { VideoAssetRow } from '../content.ts';
 import { drawMoment, planBrand, planFor, type MotionPlan } from '../anim/index.ts';
 import { inspectPlan } from '../anim/inspect.ts';
-import { lessonBundle, motionForLesson } from '../motion.ts';
+import { lessonBundle, lessonThemeId, motionForLesson, themedBrand } from '../motion.ts';
 import { PROFILES, totalFrames, type OutputProfile, type Preset } from './profiles.ts';
 import {
   assessRender,
@@ -115,8 +116,8 @@ export function createJob(lessonId: string, preset: Preset): { job?: RenderJob; 
   const id = newId();
   db.prepare(
     `INSERT INTO render_jobs (id, lesson_id, preset, width, height, fps, state, progress, log, dedupe_key,
-       expected_frames, expected_seconds, storyboard_hash, snapshot, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, '', ?, ?, ?, ?, ?, ?)`
+       expected_frames, expected_seconds, storyboard_hash, snapshot, theme_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, '', ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     lessonId,
@@ -129,6 +130,7 @@ export function createJob(lessonId: string, preset: Preset): { job?: RenderJob; 
     expectedMs / 1000,
     hash,
     snapshot,
+    lessonThemeId(lessonId),
     nowIso()
   );
 
@@ -339,6 +341,61 @@ async function encodeMoment(args: {
   }
 }
 
+/** Records a validated render job as the lesson's silent video asset. */
+export function registerRenderAsset(jobId: string): VideoAssetRow | null {
+  const job = db
+    .prepare('SELECT id, lesson_id, preset, width, height, output_path, bytes, duration_seconds, validation, state FROM render_jobs WHERE id = ?')
+    .get(jobId) as
+    | {
+        id: string;
+        lesson_id: string;
+        preset: string;
+        width: number;
+        height: number;
+        output_path: string | null;
+        bytes: number;
+        duration_seconds: number;
+        validation: string | null;
+        state: string;
+      }
+    | undefined;
+  if (!job || job.state !== 'done' || !job.output_path) return null;
+  const existing = db.prepare('SELECT * FROM video_assets WHERE render_job_id = ?').get(job.id) as
+    | VideoAssetRow
+    | undefined;
+  if (existing) return existing;
+
+  const lesson = db.prepare('SELECT version, theme_id FROM lessons WHERE id = ?').get(job.lesson_id) as
+    | { version: number; theme_id: string }
+    | undefined;
+  const validation = job.validation ? (JSON.parse(job.validation) as { ok?: boolean }) : null;
+  const id = `asset-${job.id}`;
+  const stamp = nowIso();
+  db.prepare(
+    `INSERT INTO video_assets (id, lesson_id, lesson_version, render_job_id, base_asset_id, theme_id, audio_mode,
+       audio_track_id, resolution, width, height, file_path, thumbnail_path, bytes, duration_seconds,
+       validation_ok, status, error, created_at, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, 'silent', NULL, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, ?, ?)`
+  ).run(
+    id,
+    job.lesson_id,
+    Number(lesson?.version || 1),
+    job.id,
+    lesson?.theme_id || 'theme_01',
+    job.preset,
+    job.width,
+    job.height,
+    job.output_path,
+    job.bytes,
+    job.duration_seconds,
+    validation?.ok ? 1 : 0,
+    validation?.ok ? 'ready' : 'failed',
+    stamp,
+    stamp
+  );
+  return db.prepare('SELECT * FROM video_assets WHERE id = ?').get(id) as VideoAssetRow;
+}
+
 function lastFrameCount(stdout: Buffer): number {
   const text = stdout.toString('utf8');
   let last = 0;
@@ -438,7 +495,9 @@ async function renderJob(job: RenderJob): Promise<void> {
     return;
   }
 
-  const brand = readBrand() as Brand;
+  // The lesson's theme supplies the surface palette; the personal identity and
+  // opening/ending timings come from the brand row unchanged.
+  const brand = themedBrand(readBrand() as Brand, lessonThemeId(job.lesson_id));
   const branding = readBranding();
   // Render the snapshot taken at enqueue: the file matches what was validated.
   const scenes = safeJson<Scene[]>(job.snapshot || '', []);
@@ -570,6 +629,9 @@ async function renderJob(job: RenderJob): Promise<void> {
       validation: JSON.stringify(validation),
       finished_at: nowIso()
     });
+    // A finished, validated render becomes the lesson's silent video asset, so the
+    // learner page can play exactly the file that passed the quality checks.
+    registerRenderAsset(job.id);
     // The poster image is cut from the same deterministic opening frame, so the
     // library and the publishing queue show what the video actually opens with.
     const thumb = ensureThumbnail(job.lesson_id);

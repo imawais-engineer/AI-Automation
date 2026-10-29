@@ -18,9 +18,9 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 
-import { db, nowIso, readBranding } from '../db.ts';
-import { brandingHash, openingCaptureMs } from '../branding.ts';
-import { motionForLesson } from '../motion.ts';
+import { db, nowIso, readBrand } from '../db.ts';
+import { brandingFrom, brandingHash, openingCaptureMs } from '../branding.ts';
+import { lessonThemeId, motionForLesson, themedBrand } from '../motion.ts';
 import { drawMoment, type MotionPlan } from '../anim/index.ts';
 import { OPENING_SETTLED_MS } from '../anim/stage.ts';
 
@@ -104,7 +104,8 @@ export type ThumbnailResult = {
  */
 export function ensureThumbnail(lessonId: string, opts: { force?: boolean } = {}): ThumbnailResult {
   const existing = thumbnailRow(lessonId);
-  const branding = readBranding();
+  const themeId = lessonThemeId(lessonId);
+  const branding = brandingFrom(themedBrand(readBrand(), themeId));
   const built = motionForLesson(lessonId);
   if (!built) return { error: 'This video has no animation plan yet, so it has no thumbnail.' };
 
@@ -114,7 +115,8 @@ export function ensureThumbnail(lessonId: string, opts: { force?: boolean } = {}
   }
 
   const storyHash = digest(built.scenes);
-  const brandDigest = digest(brandingHash(branding));
+  // The theme is part of the poster's identity: a theme override must recut it.
+  const brandDigest = digest({ branding: brandingHash(branding), theme: themeId });
 
   if (!opts.force && existing?.source === 'manual' && existing.file && existsSync(existing.file)) {
     return { file: existing.file, row: existing, regenerated: false };

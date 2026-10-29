@@ -305,7 +305,7 @@ export default function Create() {
                 {result.summary}
               </div>
             </div>
-            <a className="btn ghost" href={`/lessons/${result.lesson.id}`}>
+            <a className="btn ghost" href={`/admin/lessons/${result.lesson.id}`}>
               Open editor
             </a>
           </div>

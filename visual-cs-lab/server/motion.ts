@@ -7,10 +7,28 @@
  */
 
 import { db, readBrand, type Brand } from './db.ts';
+import { themeById, themePalette } from './themes.ts';
 import { effectiveConcept, safeJson, type ConceptInput, type LessonInput, type Scene } from './scenes.ts';
 import { planBrand, planFor, type MotionPlan } from './anim/index.ts';
 
 export type LessonBundle = { lesson: LessonInput & { scenes: string }; concept: ConceptInput };
+
+/** The theme a lesson was assigned. Stored on the lesson, never recalculated. */
+export function lessonThemeId(lessonId: string): string {
+  const row = db.prepare('SELECT theme_id FROM lessons WHERE id = ?').get(lessonId) as
+    | { theme_id: string | null }
+    | undefined;
+  return themeById(row?.theme_id).id;
+}
+
+/**
+ * The brand row with a theme's palette laid over it. Presenter identity, opening
+ * style and timings are untouched: a theme changes the surface, never the person.
+ */
+export function themedBrand(brand: Brand, themeId: string | null | undefined): Brand {
+  const palette = themePalette(themeById(themeId));
+  return { ...brand, ...palette };
+}
 
 export function lessonBundle(lessonId: string): LessonBundle | null {
   const lesson = db.prepare('SELECT * FROM lessons WHERE id = ?').get(lessonId) as
@@ -36,7 +54,7 @@ export function motionForLesson(lessonId: string): LessonMotion | null {
   if (!stored) return null;
   const scenes = safeJson<Scene[]>(stored.lesson.scenes || '[]', []);
   if (scenes.length === 0) return null;
-  const brand = readBrand();
+  const brand = themedBrand(readBrand(), lessonThemeId(lessonId));
   try {
     const motion = planFor({
       lesson: stored.lesson,

@@ -136,7 +136,7 @@ export default function Publishing() {
             publish by hand, then record the real URL.
           </p>
         </div>
-        <Link className="btn" to="/renders">
+        <Link className="btn" to="/admin/renders">
           Render manager
         </Link>
       </header>
@@ -167,7 +167,7 @@ export default function Publishing() {
           />
         )}
         {lesson && (
-          <Link className="btn ghost" to={`/lessons/${lesson.id}`}>
+          <Link className="btn ghost" to={`/admin/lessons/${lesson.id}`}>
             Open lesson
           </Link>
         )}

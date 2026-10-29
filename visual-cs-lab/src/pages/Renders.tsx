@@ -82,7 +82,7 @@ export default function Renders() {
           <div className="empty">
             <strong>No renders yet</strong>
             <span>Open a lesson, build its storyboard, then render an MP4.</span>
-            <Link className="btn primary" to="/lessons">
+            <Link className="btn primary" to="/admin/lessons">
               Go to lessons
             </Link>
           </div>

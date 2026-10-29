@@ -51,10 +51,10 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="row">
-          <Link className="btn" to="/concepts">
+          <Link className="btn" to="/admin/concepts">
             Visualize an algorithm
           </Link>
-          <Link className="btn primary" to="/lessons">
+          <Link className="btn primary" to="/admin/lessons">
             Create a lesson
           </Link>
         </div>
@@ -81,13 +81,13 @@ export default function Dashboard() {
         <div className="card">
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <h2>Recent lessons</h2>
-            <Link to="/lessons">All lessons</Link>
+            <Link to="/admin/lessons">All lessons</Link>
           </div>
           {data.recentLessons.length === 0 ? (
             <div className="empty">
               <strong>No lessons yet</strong>
               <span>Open a concept and create your first lesson.</span>
-              <Link className="btn primary" to="/concepts">
+              <Link className="btn primary" to="/admin/concepts">
                 Browse concepts
               </Link>
             </div>
@@ -105,7 +105,7 @@ export default function Dashboard() {
                 {data.recentLessons.map((lesson) => (
                   <tr key={lesson.id}>
                     <td>
-                      <Link to={`/lessons/${lesson.id}`}>{lesson.title}</Link>
+                      <Link to={`/admin/lessons/${lesson.id}`}>{lesson.title}</Link>
                     </td>
                     <td>{lesson.concept}</td>
                     <td>
@@ -124,7 +124,7 @@ export default function Dashboard() {
         <div className="card">
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <h2>Recent render jobs</h2>
-            <Link to="/renders">Render manager</Link>
+            <Link to="/admin/renders">Render manager</Link>
           </div>
           {data.recentJobs.length === 0 ? (
             <div className="empty">

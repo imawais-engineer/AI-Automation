@@ -31,7 +31,7 @@ export default function Lessons() {
         method: 'POST',
         body: JSON.stringify({ conceptId })
       });
-      navigate(`/lessons/${data.lesson.id}`);
+      navigate(`/admin/lessons/${data.lesson.id}`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -86,7 +86,7 @@ export default function Lessons() {
               {lessons.map((lesson) => (
                 <tr key={lesson.id}>
                   <td>
-                    <Link to={`/lessons/${lesson.id}`}>{lesson.title}</Link>
+                    <Link to={`/admin/lessons/${lesson.id}`}>{lesson.title}</Link>
                   </td>
                   <td>{lesson.concept_name || '—'}</td>
                   <td className="mono">{lesson.duration_seconds}s</td>
