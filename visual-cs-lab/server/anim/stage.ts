@@ -795,17 +795,22 @@ export function toast(
   }
 }
 
-/** The explanation strip at the bottom, inside the safe margin. */
+/**
+ * The explanation strip at the bottom, inside the safe margin.
+ *
+ * Returns the card it drew, so a panel above it can sit clear of the strip instead
+ * of guessing how tall the fitted caption is.
+ */
 export function captionBar(
   ctx: SKRSContext2D,
   dims: Dims,
   pal: Palette,
   opts: { text: string; alpha?: number; accent?: string }
-): void {
+): Rect {
   const k = dims.width / DESIGN_W;
   const alpha = clamp01(opts.alpha ?? 1);
   const value = (opts.text || '').trim();
-  if (alpha <= 0.01 || !value) return;
+  if (alpha <= 0.01 || !value) return { x: 0, y: dims.height, w: 0, h: 0 };
   const S = SAFE * k;
   const padX = 40 * k;
   const maxWidth = dims.width - S * 2 - padX * 2;
@@ -822,6 +827,7 @@ export function captionBar(
 
   const cardH = fitted.height + 52 * k;
   const top = dims.height - BAND.captionGap * k - cardH;
+  const card: Rect = { x: S, y: top, w: dims.width - S * 2, h: cardH };
 
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -835,6 +841,9 @@ export function captionBar(
   ctx.fillRect(S + 14 * k, top + 18 * k, 4 * k, cardH - 36 * k);
   ctx.restore();
 
+  // A solid strip is an obstacle: anything else drawn over it is a layout fault.
+  if (alpha >= 0.15) recordObject(ctx, 'caption', card, 'caption strip');
+
   drawText(ctx, value, {
     box: { x: S + padX, y: top + 26 * k, w: maxWidth, h: fitted.height },
     role: 'text',
@@ -847,6 +856,7 @@ export function captionBar(
     alpha,
     group: 'caption'
   });
+  return card;
 }
 
 export function footer(

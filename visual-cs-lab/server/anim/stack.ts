@@ -25,6 +25,7 @@ import {
   track
 } from './easing.ts';
 import { AnchorMap, type Rect } from './anchors.ts';
+import { recordObject } from './audit.ts';
 import type { Beat, StackBlock, StackPlan } from './plan.ts';
 import {
   BAND,
@@ -388,16 +389,22 @@ function complexityPanel(
   ctx.restore();
 }
 
+/**
+ * The LIFO card, stacked directly above the caption strip.
+ *
+ * `caption` is the strip the frame already reserved, so the card sits clear of it
+ * at every caption length: the two panels never draw over each other.
+ */
 function lifoOverlay(
   ctx: SKRSContext2D,
   dims: Dims,
   pal: Palette,
   plan: StackPlan,
   beat: Beat,
-  tMs: number
+  tMs: number,
+  caption: Rect
 ): void {
   const k = dims.width / 1080;
-  const p = beatProgress(beat, tMs);
   const alpha = envelope(tMs, beat.startMs, beat.endMs, 240, 300);
   if (alpha <= 0.01) return;
 
@@ -408,17 +415,22 @@ function lifoOverlay(
 
   const cardW = dims.width - 180 * k;
   const cardX = 90 * k;
-  const cardY = dims.height - 470 * k;
+  const cardH = 150 * k;
+  const cardY = Math.min(dims.height - 470 * k, caption.y - 24 * k - cardH);
+  const card: Rect = { x: cardX, y: cardY, w: cardW, h: cardH };
 
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.fillStyle = rgba('#050a12', 0.86);
-  roundRect(ctx, cardX, cardY, cardW, 150 * k, 24 * k);
+  roundRect(ctx, cardX, cardY, cardW, cardH, 24 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.28);
   ctx.lineWidth = 2 * k;
   ctx.stroke();
   ctx.restore();
+
+  // A solid panel is an obstacle: text from another panel over it would be a fault.
+  if (alpha >= 0.15) recordObject(ctx, 'lifo', card, 'LIFO panel');
 
   drawText(ctx, 'LIFO', {
     box: { x: cardX + 32 * k, y: cardY + 26 * k, w: 150 * k, h: 56 * k },
@@ -466,27 +478,69 @@ function lifoOverlay(
     alpha,
     group: 'lifo'
   });
+}
 
-  // A ghost of the newest value lifts out and returns: the LIFO demonstration.
-  if (topValue !== null) {
-    const lift = Math.sin(Math.PI * clamp01(track(p, 0.12, 0.82)));
-    ctx.save();
-    ctx.globalAlpha = alpha * (0.35 + 0.45 * lift);
-    ctx.translate(0, -lift * 90);
-    drawBlock(ctx, {
-      x: -BLOCK_W / 2,
-      y: FLOOR_Y - items.length * SLOT + (SLOT - BLOCK_H) / 2,
-      w: BLOCK_W,
-      h: BLOCK_H,
-      value: topValue,
-      pal,
-      tone: 'match',
-      glow: lift,
-      alpha: 0.9,
-      group: 'lifo-ghost'
-    });
-    ctx.restore();
-  }
+/**
+ * A ghost of the newest value lifting out of the tower and settling back: the LIFO
+ * demonstration.
+ *
+ * It is drawn inside the stage camera, so it stays anchored just above the block it
+ * copies however the camera is framed — as a screen-space overlay it landed in the
+ * frame's top-left corner, clipped by the edge.
+ */
+function lifoGhost(ctx: SKRSContext2D, pal: Palette, plan: StackPlan, beat: Beat, tMs: number): void {
+  const alpha = envelope(tMs, beat.startMs, beat.endMs, 240, 300);
+  if (alpha <= 0.01) return;
+
+  const last = plan.ops[plan.ops.length - 1];
+  const items = last ? last.event.items : [];
+  const topValue = items.length ? items[items.length - 1] : null;
+  if (topValue === null) return;
+
+  const p = beatProgress(beat, tMs);
+  const lift = Math.sin(Math.PI * clamp01(track(p, 0.12, 0.82)));
+  // It floats clear of the tower it belongs to, so it never covers the real block
+  // or its value while it hovers.
+  const y = FLOOR_Y - items.length * SLOT - BLOCK_H - 26 - lift * 90;
+  const cx = 0;
+  const cy = y + BLOCK_H / 2;
+
+  ctx.save();
+  ctx.globalAlpha = alpha * (0.5 + 0.4 * lift);
+
+  // A hollow, dashed copy reads as "the same value leaving", not as a third element.
+  const halo = ctx.createRadialGradient(cx, cy, BLOCK_W * 0.15, cx, cy, BLOCK_W * 0.72);
+  halo.addColorStop(0, rgba(pal.coral, 0.16 * (0.4 + lift)));
+  halo.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, BLOCK_W * 0.72, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.setLineDash([20, 14]);
+  roundRect(ctx, -BLOCK_W / 2, y, BLOCK_W, BLOCK_H, 18);
+  ctx.fillStyle = rgba(pal.coral, 0.07);
+  ctx.fill();
+  ctx.strokeStyle = rgba(pal.coral, 0.8);
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  recordObject(ctx, 'lifo-ghost', { x: -BLOCK_W / 2, y, w: BLOCK_W, h: BLOCK_H }, String(topValue));
+  drawText(ctx, String(topValue), {
+    box: { x: -BLOCK_W / 2, y, w: BLOCK_W, h: BLOCK_H },
+    role: 'display',
+    weight: 700,
+    size: 54,
+    minSize: 30,
+    maxLines: 1,
+    align: 'center',
+    valign: 'middle',
+    color: rgba(pal.coral, 0.95),
+    alpha: alpha * (0.5 + 0.4 * lift),
+    group: 'lifo-ghost'
+  });
 }
 
 /** The opening headline: Space Grotesk, large, fitted and deliberately broken. */
@@ -581,6 +635,13 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
     });
     anchors.set(`block:${item.block.id}`, item.rect);
     if (item.alpha > 0.4) obstacles.push(item.rect);
+  }
+
+  // The LIFO demonstration lifts a ghost of the newest value out of the tower, in
+  // the same camera space as the blocks it copies.
+  const lifoBeatStage = plan.beats.find((item) => item.key === 'lifo');
+  if (lifoBeatStage && tMs >= lifoBeatStage.startMs && tMs < lifoBeatStage.endMs) {
+    lifoGhost(ctx, pal, plan, lifoBeatStage, tMs);
   }
 
   // Slot indices on the left keep the spatial order unambiguous.
@@ -743,11 +804,13 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
 
   const lifoBeat = plan.beats.find((item) => item.key === 'lifo');
   if (lifoBeat && tMs >= lifoBeat.startMs && tMs < lifoBeat.endMs) {
-    lifoOverlay(ctx, dims, pal, plan, lifoBeat, tMs);
-    captionBar(ctx, dims, pal, {
+    // The strip is laid out first so the card above it is placed against its real
+    // height instead of overlapping it.
+    const strip = captionBar(ctx, dims, pal, {
       text: plan.copy.takeaway || 'The last value in is the first value out.',
       alpha: envelope(tMs, lifoBeat.startMs, lifoBeat.endMs, 240, 300)
     });
+    lifoOverlay(ctx, dims, pal, plan, lifoBeat, tMs, strip);
   }
 
   const complexityBeat = plan.beats.find((item) => item.key === 'complexity');
@@ -755,10 +818,13 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
     const p = beatProgress(complexityBeat, tMs);
     if (p > 0.5) curtain(ctx, dims, pal, 0.32 * track(p, 0.5, 0.6));
     complexityPanel(ctx, dims, pal, plan, complexityBeat, tMs);
+    // The concept stores the whole phrase ("O(1) push, pop and peek"), so only its
+    // complexity token reads correctly inside this sentence.
+    const timeToken = plan.copy.time.match(/O\([^)]+\)/)?.[0] || 'O(1)';
     captionBar(ctx, dims, pal, {
       text:
         p < 0.5
-          ? `PUSH, POP and PEEK are ${plan.copy.time || 'O(1)'} — only the top is touched. Space: ${plan.copy.space || 'O(n)'}.`
+          ? `PUSH, POP and PEEK are ${timeToken} each — only the top is touched. Space: ${plan.copy.space || 'O(n)'}.`
           : 'Underflow: popping an empty stack returns EMPTY instead of a value.',
       alpha: envelope(tMs, complexityBeat.startMs, complexityBeat.endMs, 240, 300)
     });
