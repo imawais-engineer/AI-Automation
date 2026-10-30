@@ -895,3 +895,132 @@ pre.code {
   object-fit: cover;
   background: #05080f;
 }
+
+/* The content plan as a learning path: modules in roadmap order, lessons as steps. */
+.roadmap {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.roadmap-module {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.roadmap-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.roadmap-head h2 {
+  font-size: 17px;
+}
+
+.roadmap-head .sub {
+  color: var(--muted);
+  margin-top: 3px;
+  max-width: 60ch;
+}
+
+.roadmap-count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.roadmap-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roadmap-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 12px 11px 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.roadmap-step:hover {
+  border-color: rgba(167, 139, 250, 0.35);
+  background: var(--bg-soft);
+}
+
+/* The path itself: a line through the step markers of one module. */
+.roadmap-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 25px;
+  top: 38px;
+  bottom: -14px;
+  width: 1px;
+  background: var(--line);
+}
+
+.roadmap-node {
+  flex: none;
+  width: 25px;
+  height: 25px;
+  border-radius: 999px;
+  border: 1px solid rgba(167, 139, 250, 0.45);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.roadmap-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.roadmap-title {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.roadmap-title a {
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.roadmap-title a:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 760px) {
+  .roadmap-step {
+    flex-wrap: wrap;
+  }
+  .roadmap-count {
+    align-items: flex-start;
+  }
+}
