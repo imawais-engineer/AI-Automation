@@ -133,7 +133,7 @@ export default function AdminLessonContent() {
       <header className="page-head">
         <div>
           <Link to="/admin/content" style={{ fontSize: 12 }}>
-            ← Content library
+            ← Projected work
           </Link>
           <h1 style={{ marginTop: 6 }}>{data.lesson.title}</h1>
           <p className="sub">
@@ -149,9 +149,6 @@ export default function AdminLessonContent() {
           )}
           <Link className="btn" to={`/admin/lessons/${data.lesson.id}`}>
             Trace & storyboard
-          </Link>
-          <Link className="btn" to="/admin/videos">
-            Video studio
           </Link>
         </div>
       </header>

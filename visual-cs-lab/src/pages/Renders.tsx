@@ -59,7 +59,7 @@ export default function Renders() {
     <>
       <header className="page-head">
         <div>
-          <h1>Render &amp; export</h1>
+          <h1>Created videos</h1>
           <p className="sub">
             Every job is a real ffmpeg encode of frames drawn from the stored storyboard. A job only
             becomes <strong>done</strong> after the encoded file passes its checks: MP4 container, H.264,
@@ -82,8 +82,8 @@ export default function Renders() {
           <div className="empty">
             <strong>No renders yet</strong>
             <span>Open a lesson, build its storyboard, then render an MP4.</span>
-            <Link className="btn primary" to="/admin/lessons">
-              Go to lessons
+            <Link className="btn primary" to="/admin/content">
+              Go to projected work
             </Link>
           </div>
         ) : (

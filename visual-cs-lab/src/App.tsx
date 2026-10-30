@@ -12,25 +12,11 @@ import Settings from './pages/public/Settings';
 import SignIn from './pages/public/SignIn';
 import SignUp from './pages/public/SignUp';
 
-import AdminOverview from './pages/admin/AdminOverview';
 import AdminContent from './pages/admin/AdminContent';
 import AdminLessonContent from './pages/admin/AdminLessonContent';
-import AdminReview from './pages/admin/AdminReview';
-import AdminAudio from './pages/admin/AdminAudio';
-import AdminUsers from './pages/admin/AdminUsers';
-import AdminRoadmaps from './pages/admin/AdminRoadmaps';
-import AdminThemes from './pages/admin/AdminThemes';
 
-import Dashboard from './pages/Dashboard';
-import Create from './pages/Create';
-import Videos from './pages/Videos';
-import Concepts from './pages/Concepts';
-import ConceptDetail from './pages/ConceptDetail';
-import Lessons from './pages/Lessons';
 import LessonEditor from './pages/LessonEditor';
-import BrandPage from './pages/Brand';
 import Renders from './pages/Renders';
-import Publishing from './pages/Publishing';
 
 const PUBLIC_NAV = [
   { to: '/', label: 'Home', end: true },
@@ -40,22 +26,8 @@ const PUBLIC_NAV = [
 ];
 
 const STUDIO_NAV = [
-  { to: '/admin', label: 'Overview', end: true },
-  { to: '/admin/content', label: 'Content library' },
-  { to: '/admin/lessons', label: 'Lessons & storyboards' },
-  { to: '/admin/concepts', label: 'Concepts' },
-  { to: '/admin/create', label: 'Create a short' },
-  { to: '/admin/videos', label: 'Video studio' },
-  { to: '/admin/renders', label: 'Render manager' }
-];
-
-const PRODUCTION_NAV = [
-  { to: '/admin/review', label: 'Review & publish' },
-  { to: '/admin/roadmaps', label: 'Roadmap editor' },
-  { to: '/admin/themes', label: 'Theme studio' },
-  { to: '/admin/audio', label: 'Audio library' },
-  { to: '/admin/publishing', label: 'Publishing queue' },
-  { to: '/admin/users', label: 'Users & roles' }
+  { to: '/admin/content', label: 'Projected work' },
+  { to: '/admin/renders', label: 'Created videos' }
 ];
 
 /** The public shell: minimal navigation, no production controls. */
@@ -189,22 +161,11 @@ function AdminLayout() {
 
         <nav className="nav">
           {STUDIO_NAV.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end}>
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="nav" style={{ marginTop: 16 }}>
-          <div className="mono" style={{ fontSize: 10.5, color: 'var(--muted)', padding: '0 12px 6px' }}>
-            PRODUCTION
-          </div>
-          {PRODUCTION_NAV.map((item) => (
             <NavLink key={item.to} to={item.to}>
               {item.label}
             </NavLink>
           ))}
-        </div>
+        </nav>
 
         <div className="foot">
           <span className="mono">{user.email}</span>
@@ -244,34 +205,12 @@ export default function App() {
       </Route>
 
       <Route element={<AdminLayout />}>
-        <Route path="/admin" element={<AdminOverview />} />
+        <Route path="/admin" element={<Navigate to="/admin/content" replace />} />
         <Route path="/admin/content" element={<AdminContent />} />
         <Route path="/admin/content/:id" element={<AdminLessonContent />} />
-        <Route path="/admin/review" element={<AdminReview />} />
-        <Route path="/admin/audio" element={<AdminAudio />} />
-        <Route path="/admin/users" element={<AdminUsers />} />
-        <Route path="/admin/roadmaps" element={<AdminRoadmaps />} />
-        <Route path="/admin/themes" element={<AdminThemes />} />
-        <Route path="/admin/create" element={<Create />} />
-        <Route path="/admin/videos" element={<Videos />} />
-        <Route path="/admin/concepts" element={<Concepts />} />
-        <Route path="/admin/concepts/:id" element={<ConceptDetail />} />
-        <Route path="/admin/lessons" element={<Lessons />} />
         <Route path="/admin/lessons/:id" element={<LessonEditor />} />
         <Route path="/admin/renders" element={<Renders />} />
-        <Route path="/admin/publishing" element={<Publishing />} />
-        <Route path="/admin/brand" element={<BrandPage />} />
       </Route>
-
-      {/* The production screens moved into the studio; old URLs keep working. */}
-      <Route path="/videos" element={<Navigate to="/admin/videos" replace />} />
-      <Route path="/create" element={<Navigate to="/admin/create" replace />} />
-      <Route path="/lessons" element={<Navigate to="/admin/lessons" replace />} />
-      <Route path="/lessons/:id" element={<Navigate to="/admin/content" replace />} />
-      <Route path="/renders" element={<Navigate to="/admin/renders" replace />} />
-      <Route path="/publishing" element={<Navigate to="/admin/publishing" replace />} />
-      <Route path="/style" element={<Navigate to="/admin/themes" replace />} />
-      <Route path="/overview" element={<Navigate to="/admin" replace />} />
 
       <Route
         path="*"

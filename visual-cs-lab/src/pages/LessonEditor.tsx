@@ -287,12 +287,10 @@ export default function LessonEditor() {
       <header className="page-head">
         <div>
           <div className="row" style={{ marginBottom: 6 }}>
-            <Link to="/admin/lessons" style={{ fontSize: 12 }}>
-              ← Lessons
+            <Link to="/admin/content" style={{ fontSize: 12 }}>
+              ← Projected work
             </Link>
-            <Link to={`/admin/concepts/${detail.concept.id}`} className="badge">
-              {detail.concept.name}
-            </Link>
+            <span className="badge">{detail.concept.name}</span>
             <span className="badge">{draft.review_status?.replace('_', ' ')}</span>
           </div>
           <h1>{draft.title || 'Untitled lesson'}</h1>
