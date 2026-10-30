@@ -42,6 +42,7 @@ import {
   type Preset,
   type RenderJob
 } from './render/jobs.ts';
+import { cleanupPlan, KEEP_PER_LESSON, runCleanup } from './render/cleanup.ts';
 
 import { attachUser, requireAction } from './auth.ts';
 import { adminApi } from './admin-api.ts';
@@ -890,6 +891,18 @@ app.get('/api/renders', requireAction('content:read'), (req, res) => {
     )
     .all(lessonId, lessonId);
   res.json({ renders: jobs });
+});
+
+/** What a cleanup would remove, so the Studio can confirm before deleting. */
+app.get('/api/renders/cleanup', requireAction('render:run'), (_req, res) => {
+  res.json({ keepPerLesson: KEEP_PER_LESSON, plan: cleanupPlan() });
+});
+
+/** Deletes every render beyond the newest two of its lesson, and their MP4s. */
+app.post('/api/renders/cleanup', requireAction('render:run'), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id: unknown) => String(id)) : undefined;
+  const result = await runCleanup(ids);
+  res.status(result.failed.length > 0 ? 207 : 200).json({ result });
 });
 
 app.get('/api/renders/:id', requireAction('content:read'), (req, res) => {
