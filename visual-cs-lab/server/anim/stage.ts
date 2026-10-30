@@ -59,6 +59,9 @@ export type BrandLike = {
   presenter?: string;
   role?: string;
   closing?: string;
+  /** What the viewer should do next, and where to find the presenter. */
+  cta?: string;
+  handle?: string;
 };
 
 export function paletteOf(brand: BrandLike): Palette {
@@ -81,6 +84,11 @@ export function paletteOf(brand: BrandLike): Palette {
 export const DESIGN_W = 1080;
 export const DESIGN_H = 1920;
 export const SAFE = 64;
+/**
+ * The right-hand rail the platform overlays with its like / comment / share
+ * buttons, in design pixels. Copy and pills stay out of it.
+ */
+export const RAIL = 96;
 
 /**
  * The frame's overlay grid, in design pixels. Each overlay is only allowed inside
@@ -97,7 +105,7 @@ export const BAND = {
   hookBottom: 760,
   resultTop: 336,
   resultBottom: 508,
-  captionGap: 194,
+  captionGap: 480,
   footer: 78
 };
 
@@ -826,7 +834,9 @@ export function toast(
 }
 
 /**
- * The explanation strip at the bottom, inside the safe margin.
+ * The explanation strip, inside the safe margin and above the platform's
+ * bottom band (username, description, music bar). The right rail is kept clear
+ * for the like / comment / share stack, which the platform draws over the video.
  *
  * Returns the card it drew, so a panel above it can sit clear of the strip instead
  * of guessing how tall the fitted caption is.
@@ -843,7 +853,8 @@ export function captionBar(
   if (alpha <= 0.01 || !value) return { x: 0, y: dims.height, w: 0, h: 0 };
   const S = SAFE * k;
   const padX = 40 * k;
-  const maxWidth = dims.width - S * 2 - padX * 2;
+  const cardWidth = dims.width - S * 2 - RAIL * k;
+  const maxWidth = cardWidth - padX * 2;
 
   const fitted = fitText(ctx, value, {
     box: { x: 0, y: 0, w: maxWidth, h: 168 * k },
@@ -857,12 +868,12 @@ export function captionBar(
 
   const cardH = fitted.height + 52 * k;
   const top = dims.height - BAND.captionGap * k - cardH;
-  const card: Rect = { x: S, y: top, w: dims.width - S * 2, h: cardH };
+  const card: Rect = { x: S, y: top, w: cardWidth, h: cardH };
 
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.fillStyle = rgba(pal.scrim, 0.8);
-  roundRect(ctx, S, top, dims.width - S * 2, cardH, 22 * k);
+  roundRect(ctx, S, top, cardWidth, cardH, 22 * k);
   ctx.fill();
   ctx.strokeStyle = rgba(pal.accent, 0.2);
   ctx.lineWidth = 1.4 * k;
@@ -889,42 +900,6 @@ export function captionBar(
   return card;
 }
 
-export function footer(
-  ctx: SKRSContext2D,
-  dims: Dims,
-  pal: Palette,
-  opts: { progress: number; mark: string; alpha?: number }
-): void {
-  const k = dims.width / DESIGN_W;
-  const S = SAFE * k;
-  const y = dims.height - BAND.footer * k;
-  const alpha = clamp01(opts.alpha ?? 1);
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = rgba(pal.ink, 0.1);
-  ctx.fillRect(S, y, dims.width - S * 2, Math.max(1, 2 * k));
-  ctx.fillStyle = rgba(pal.accent, 0.85);
-  ctx.fillRect(S, y, (dims.width - S * 2) * clamp01(opts.progress), Math.max(1, 2.6 * k));
-  const size = 20 * k;
-  const label = textWidth(ctx, 'SILENT SHORT · NO AUDIO TRACK', 'mono', 400, size);
-  text(ctx, 'SILENT SHORT · NO AUDIO TRACK', S, y + 30 * k, {
-    size,
-    color: rgba(pal.ink, 0.34),
-    mono: true,
-    weight: 400,
-    maxWidth: dims.width - S * 2 - label * 0.9
-  });
-  text(ctx, (opts.mark || '').toUpperCase(), dims.width - S, y + 30 * k, {
-    size,
-    color: rgba(pal.ink, 0.34),
-    mono: true,
-    weight: 400,
-    align: 'right',
-    maxWidth: dims.width * 0.4
-  });
-  ctx.restore();
-}
-
 /* -------------------------------------------------------------- personal brand */
 
 /**
@@ -935,15 +910,19 @@ export function footer(
  * `OPENING_SETTLED_MS`, which is the moment the automatic thumbnail is taken.
  */
 export const OPENING_TIMING = {
-  kicker: [80, 360],
-  title: [160, 820],
-  rule: [640, 980],
-  credit: [820, 1120],
-  sweep: [120, 1500]
+  kicker: [64, 288],
+  title: [128, 656],
+  rule: [512, 784],
+  credit: [656, 896],
+  sweep: [96, 1200]
 } as const;
 
-/** When the title, rule and presenter credit are all fully visible. */
-export const OPENING_SETTLED_MS = 1120;
+/**
+ * When the opening is complete: the title, rule and presenter credit are all in
+ * place and the automatic thumbnail is cut. The reveal itself settles by 896 ms;
+ * the capture waits a beat longer so the held title is what the frame shows.
+ */
+export const OPENING_SETTLED_MS = 1000;
 
 export type OpeningCopy = {
   title: string;
@@ -1232,6 +1211,36 @@ export function brandEnd(
     alpha: closeIn,
     group: 'brand-closing'
   });
+
+  // The call to action and the handle: an outro has to ask for something.
+  const ctaIn = easeOutCubic(track(p, 0.52, 0.88));
+  if (ctaIn > 0.01) {
+    if (brand.cta) {
+      drawChip(ctx, cx, ruleY + 300 * k, brand.cta, {
+        size: 28 * k,
+        color: pal.accent,
+        align: 'center',
+        filled: true,
+        alpha: ctaIn,
+        maxWidth: width * 0.92,
+        group: 'brand-cta'
+      });
+    }
+    if (brand.handle) {
+      drawText(ctx, brand.handle, {
+        box: { x: SAFE * k, y: ruleY + 348 * k, w: width, h: 44 * k },
+        role: 'mono',
+        weight: 600,
+        size: 28 * k,
+        minSize: 20 * k,
+        maxLines: 1,
+        align: 'center',
+        color: rgba(pal.ink, 0.66),
+        alpha: ctaIn,
+        group: 'brand-handle'
+      });
+    }
+  }
 
   ctx.restore();
 }

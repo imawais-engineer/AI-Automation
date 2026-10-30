@@ -33,7 +33,6 @@ import {
   curtain,
   drawBlock,
   drawChip,
-  footer,
   hudHeader,
   hudOperation,
   openingReveal,
@@ -41,7 +40,6 @@ import {
   popCamera,
   pushCamera,
   safeBox,
-  subjectSilhouette,
   toast,
   type Camera,
   type Dims,
@@ -239,6 +237,10 @@ function drawMarkers(
   pal: Palette,
   alpha: number
 ): void {
+  // A match ends the search. The marker row, the bracket and the range label all
+  // describe a search still in progress, so they leave the frame the moment the
+  // value is found — the matched block and the result line carry the ending.
+  if (state.matched !== null) return;
   const last = plan.array.length - 1;
   const lowIndex = Math.max(0, Math.min(last, Math.round(state.low)));
   const highIndex = Math.max(0, Math.min(last, Math.round(state.high)));
@@ -527,12 +529,8 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
   // stage is clear behind it.
   const stageFade = brandBeat ? 1 - track(tMs, brandBeat.startMs, brandBeat.startMs + 420) : 1;
   const arrayAlpha = clamp01((tMs - arrayStart) / 700) * stageFade;
-  if (inOpening && openBeat) {
-    const glow =
-      easeOutCubic(track(tMs, openBeat.startMs + 120, openBeat.startMs + 720)) *
-      (1 - track(tMs, openBeat.endMs - 460, openBeat.endMs));
-    subjectSilhouette(ctx, 'binary', pal, glow * 0.6);
-  }
+  // No placeholder boxes behind the title: the frame holds the name and then the
+  // real array, so the opening never shows an empty grid it has to fill later.
 
   plan.array.forEach((value, index) => {
     // A block that is barely visible is not drawn at all: nothing off screen may
@@ -644,6 +642,8 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
   }
 
   const activeStep = plan.steps.find((window) => tMs >= window.startMs && tMs < window.endMs);
+  const foundStep = plan.steps.find((window) => window.step.comparison === 'equal');
+  const lastStep = plan.steps[plan.steps.length - 1];
 
   const targetAlpha =
     clamp01((tMs - (openBeat ? openBeat.endMs - 300 : (plan.beats[0]?.startMs ?? 0))) / 700) *
@@ -730,6 +730,17 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
         });
       }
       captionBar(ctx, dims, pal, { text: step.message, alpha });
+    } else if (lastStep && tMs >= lastStep.endMs) {
+      // The trace is over. The result owns the caption instead of falling back to
+      // the intro line, and the frozen stage stays readable underneath.
+      const mid = foundStep ? foundStep.step.mid : lastStep.step.mid;
+      captionBar(ctx, dims, pal, {
+        text:
+          foundStep !== undefined
+            ? `${plan.target} is at index ${mid} — the search stops at the match.`
+            : lastStep.step.message,
+        alpha
+      });
     } else if (plan.traceIntro && tMs >= plan.traceIntro.startMs) {
       hudOperation(ctx, dims, pal, {
         label: 'mid = floor((low + high) / 2)',
@@ -761,9 +772,4 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
     brandEnd(ctx, dims, pal, plan.brand, p);
   }
 
-  footer(ctx, dims, pal, {
-    progress: plan.durationMs > 0 ? tMs / plan.durationMs : 0,
-    mark: plan.brand.watermark || plan.brand.presenter,
-    alpha: headerAlpha
-  });
 }

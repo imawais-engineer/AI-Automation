@@ -185,6 +185,8 @@ ensureColumn('brand', 'opening_ms', 'INTEGER NOT NULL DEFAULT 2500');
 ensureColumn('brand', 'ending_ms', 'INTEGER NOT NULL DEFAULT 2500');
 ensureColumn('brand', 'opening_style', "TEXT NOT NULL DEFAULT 'cinematic'");
 ensureColumn('brand', 'auto_thumbnail', 'INTEGER NOT NULL DEFAULT 1');
+/** The handle shown with the closing call to action. */
+ensureColumn('brand', 'handle', "TEXT NOT NULL DEFAULT ''");
 
 const brandRow = db.prepare('SELECT id FROM brand WHERE id = 1').get();
 if (!brandRow) {
@@ -971,6 +973,7 @@ export type Brand = {
   presenter: string;
   role: string;
   closing_line: string;
+  handle: string;
   opening_ms: number;
   ending_ms: number;
   opening_style: string;

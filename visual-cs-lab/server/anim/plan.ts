@@ -47,6 +47,9 @@ export type PlanBrand = {
   presenter: string;
   role: string;
   closing: string;
+  /** Closing call to action, and the presenter's social handle. */
+  cta: string;
+  handle: string;
   openingStyle: string;
 };
 

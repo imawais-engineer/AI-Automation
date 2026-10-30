@@ -34,6 +34,7 @@ export function planBrand(brand: {
   presenter?: string;
   role?: string;
   closing_line?: string;
+  handle?: string;
   opening_style?: string;
 }): PlanBrand {
   return {
@@ -49,6 +50,9 @@ export function planBrand(brand: {
     presenter: String(brand.presenter || '').trim() || BRAND_DEFAULTS.presenter,
     role: String(brand.role || '').trim() || BRAND_DEFAULTS.role,
     closing: String(brand.closing_line || '').trim() || BRAND_DEFAULTS.closing,
+    // The closing line stays personal; the call to action is the platform ask.
+    cta: String(brand.outro || '').trim() || BRAND_DEFAULTS.cta,
+    handle: String(brand.handle || '').trim() || BRAND_DEFAULTS.handle,
     openingStyle: String(brand.opening_style || '').trim() || 'cinematic'
   };
 }

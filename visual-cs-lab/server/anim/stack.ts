@@ -38,7 +38,6 @@ import {
   drawBlock,
   drawChip,
   drawPlatform,
-  footer,
   hudHeader,
   hudOperation,
   openingReveal,
@@ -836,9 +835,4 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
     brandEnd(ctx, dims, pal, plan.brand, p);
   }
 
-  footer(ctx, dims, pal, {
-    progress: plan.durationMs > 0 ? tMs / plan.durationMs : 0,
-    mark: plan.brand.watermark || plan.brand.presenter,
-    alpha: headerAlpha
-  });
 }

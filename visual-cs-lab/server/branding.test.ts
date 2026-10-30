@@ -31,6 +31,8 @@ const BRAND: PlanBrand = {
   presenter: BRAND_DEFAULTS.presenter,
   role: BRAND_DEFAULTS.role,
   closing: BRAND_DEFAULTS.closing,
+  cta: BRAND_DEFAULTS.cta,
+  handle: BRAND_DEFAULTS.handle,
   openingStyle: 'cinematic'
 };
 

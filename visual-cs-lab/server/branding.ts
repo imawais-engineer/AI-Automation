@@ -14,7 +14,10 @@
 export const BRAND_DEFAULTS = {
   presenter: 'Muhammad Awais',
   role: 'Aspiring Forward Deployed AI Engineer',
-  closing: 'Building at the intersection of AI and software.'
+  closing: 'Building at the intersection of AI and software.',
+  /** The outro's ask, and the handle a viewer can follow. */
+  cta: 'Follow for more visual algorithms',
+  handle: '@muhammadawais'
 } as const;
 
 export type OpeningStyle = 'cinematic' | 'minimal' | 'bold';
@@ -37,6 +40,8 @@ export type Branding = {
   presenter: string;
   role: string;
   closing: string;
+  cta: string;
+  handle: string;
   openingMs: number;
   endingMs: number;
   openingStyle: OpeningStyle;
@@ -47,6 +52,8 @@ export type BrandRowLike = {
   presenter?: string | null;
   role?: string | null;
   closing_line?: string | null;
+  outro?: string | null;
+  handle?: string | null;
   opening_ms?: number | null;
   ending_ms?: number | null;
   opening_style?: string | null;
@@ -70,6 +77,8 @@ export function brandingFrom(brand?: BrandRowLike | null): Branding {
     presenter: String(brand?.presenter || '').trim() || BRAND_DEFAULTS.presenter,
     role: String(brand?.role || '').trim() || BRAND_DEFAULTS.role,
     closing: String(brand?.closing_line || '').trim() || BRAND_DEFAULTS.closing,
+    cta: String(brand?.outro || '').trim() || BRAND_DEFAULTS.cta,
+    handle: String(brand?.handle || '').trim() || BRAND_DEFAULTS.handle,
     openingMs: clampDuration(brand?.opening_ms, DEFAULT_OPENING_MS, OPENING_MIN_MS, OPENING_MAX_MS),
     endingMs: clampDuration(brand?.ending_ms, DEFAULT_ENDING_MS, ENDING_MIN_MS, ENDING_MAX_MS),
     openingStyle: styleOf(brand?.opening_style),
@@ -120,6 +129,8 @@ export function brandingHash(branding: Branding): string {
     branding.presenter,
     branding.role,
     branding.closing,
+    branding.cta,
+    branding.handle,
     branding.openingMs,
     branding.endingMs,
     branding.openingStyle
