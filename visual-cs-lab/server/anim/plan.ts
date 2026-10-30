@@ -10,8 +10,10 @@
 
 import type { BinarySearchStep } from '../algorithms/binary-search.ts';
 import type { StackEvent } from '../algorithms/stack.ts';
+import type { ArrayStep } from '../algorithms/arrays.ts';
+import type { LinkedListStep } from '../algorithms/linked-lists.ts';
 
-export type BeatKey = 'open' | 'intro' | 'setup' | 'op' | 'lifo' | 'complexity' | 'brand';
+export type BeatKey = 'open' | 'intro' | 'setup' | 'op' | 'trace' | 'lifo' | 'complexity' | 'brand';
 
 export type Beat = {
   key: BeatKey;
@@ -49,7 +51,8 @@ export type PlanBrand = {
   closing: string;
   /** Closing call to action, and the presenter's social handle. */
   cta: string;
-  handle: string;
+  instagram: string;
+  linkedin: string;
   openingStyle: string;
 };
 
@@ -119,7 +122,52 @@ export type BinaryPlan = {
   traceIntro: { startMs: number; endMs: number } | null;
 };
 
-export type MotionPlan = StackPlan | BinaryPlan;
+export type ArrayVisitWindow = {
+  step: ArrayStep;
+  index: number;
+  startMs: number;
+  endMs: number;
+};
+
+export type ArrayPlan = {
+  kind: 'array';
+  durationMs: number;
+  brand: PlanBrand;
+  copy: PlanCopy;
+  opening: PlanOpening;
+  beats: Beat[];
+  array: number[];
+  total: number;
+  steps: ArrayVisitWindow[];
+  /** The array settles before the first cell is added. */
+  traceIntro: { startMs: number; endMs: number } | null;
+  /** The frozen result at the end of the trace, held before the next beat. */
+  hold: { startMs: number; endMs: number } | null;
+};
+
+export type LinkedVisitWindow = {
+  step: LinkedListStep;
+  index: number;
+  startMs: number;
+  endMs: number;
+};
+
+export type LinkedPlan = {
+  kind: 'linked';
+  durationMs: number;
+  brand: PlanBrand;
+  copy: PlanCopy;
+  opening: PlanOpening;
+  beats: Beat[];
+  values: number[];
+  target: number;
+  foundIndex: number | null;
+  steps: LinkedVisitWindow[];
+  traceIntro: { startMs: number; endMs: number } | null;
+  hold: { startMs: number; endMs: number } | null;
+};
+
+export type MotionPlan = StackPlan | BinaryPlan | ArrayPlan | LinkedPlan;
 
 export type PlanScene = {
   type: string;
@@ -334,5 +382,127 @@ export function buildBinaryPlan(args: {
     steps: stepWindows,
     halving: { startMs: traceStartMs + introMs + stepsMs, endMs: traceEndMs },
     traceIntro: { startMs: traceStartMs, endMs: traceStartMs + introMs }
+  };
+}
+
+/** Beat key for a traversal lesson: the trace beat is what the animation runs on. */
+function traversalKey(type: string): BeatKey {
+  if (type === 'open') return 'open';
+  if (type === 'hook') return 'intro';
+  if (type === 'trace') return 'trace';
+  if (type === 'complexity') return 'complexity';
+  if (type === 'brand') return 'brand';
+  return 'setup';
+}
+
+/**
+ * The trace beat of a traversal lesson is split three ways: the data settles, every
+ * verified visit gets an equal share, and the last share holds the frozen result so
+ * the animation stops cleanly on the answer instead of cutting away from it.
+ */
+function traversalWindows<T>(
+  steps: T[],
+  traceStartMs: number,
+  traceEndMs: number
+): {
+  windows: { step: T; index: number; startMs: number; endMs: number }[];
+  intro: { startMs: number; endMs: number };
+  hold: { startMs: number; endMs: number };
+} {
+  const span = Math.max(1, traceEndMs - traceStartMs);
+  const introMs = Math.round(span * 0.12);
+  const holdMs = Math.round(span * 0.16);
+  const stepsMs = span - introMs - holdMs;
+  const per = stepsMs / Math.max(1, steps.length);
+  return {
+    windows: steps.map((step, index) => ({
+      step,
+      index,
+      startMs: Math.round(traceStartMs + introMs + index * per),
+      endMs: Math.round(traceStartMs + introMs + (index + 1) * per)
+    })),
+    intro: { startMs: traceStartMs, endMs: traceStartMs + introMs },
+    hold: { startMs: traceStartMs + introMs + stepsMs, endMs: traceEndMs }
+  };
+}
+
+function traversalBeats(scenes: PlanScene[]): { beats: Beat[]; traceStartMs: number; traceEndMs: number } {
+  const beats: Beat[] = [];
+  let traceStartMs = -1;
+  let traceEndMs = -1;
+  for (const { scene, index, startMs, endMs } of windows(scenes)) {
+    if (scene.type === 'trace') {
+      traceStartMs = startMs;
+      traceEndMs = endMs;
+    }
+    beats.push({
+      key: traversalKey(scene.type),
+      sceneType: scene.type,
+      startMs,
+      endMs,
+      sceneIndex: index,
+      title: scene.title,
+      caption: scene.caption || ''
+    });
+  }
+  if (traceStartMs < 0) {
+    throw new Error('The storyboard has no trace beat to animate — rebuild it from the verified trace.');
+  }
+  return { beats, traceStartMs, traceEndMs };
+}
+
+/** The Arrays plan: one visited cell at a time, with the running total it produced. */
+export function buildArrayPlan(args: {
+  scenes: PlanScene[];
+  array: number[];
+  total: number;
+  steps: ArrayStep[];
+  copy: PlanCopy;
+  brand: PlanBrand;
+}): ArrayPlan {
+  const { scenes, array, total, steps, copy, brand } = args;
+  const { beats, traceStartMs, traceEndMs } = traversalBeats(scenes);
+  const { windows: visitWindows, intro, hold } = traversalWindows(steps, traceStartMs, traceEndMs);
+  return {
+    kind: 'array',
+    durationMs: beats[beats.length - 1].endMs,
+    brand,
+    copy,
+    opening: openingOf(scenes, brand),
+    beats,
+    array,
+    total,
+    steps: visitWindows,
+    traceIntro: intro,
+    hold
+  };
+}
+
+/** The Linked Lists plan: the pointer walks the links the trace actually followed. */
+export function buildLinkedPlan(args: {
+  scenes: PlanScene[];
+  values: number[];
+  target: number;
+  foundIndex: number | null;
+  steps: LinkedListStep[];
+  copy: PlanCopy;
+  brand: PlanBrand;
+}): LinkedPlan {
+  const { scenes, values, target, foundIndex, steps, copy, brand } = args;
+  const { beats, traceStartMs, traceEndMs } = traversalBeats(scenes);
+  const { windows: visitWindows, intro, hold } = traversalWindows(steps, traceStartMs, traceEndMs);
+  return {
+    kind: 'linked',
+    durationMs: beats[beats.length - 1].endMs,
+    brand,
+    copy,
+    opening: openingOf(scenes, brand),
+    beats,
+    values,
+    target,
+    foundIndex,
+    steps: visitWindows,
+    traceIntro: intro,
+    hold
   };
 }

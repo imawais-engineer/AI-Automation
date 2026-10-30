@@ -11,14 +11,26 @@ import type { SKRSContext2D } from '@napi-rs/canvas';
 
 import { runConcept, type ConceptInput, type LessonInput, type Scene } from '../scenes.ts';
 import { BRAND_DEFAULTS } from '../branding.ts';
-import { buildBinaryPlan, buildStackPlan, type MotionPlan, type PlanBrand, type PlanCopy } from './plan.ts';
+import {
+  buildArrayPlan,
+  buildBinaryPlan,
+  buildLinkedPlan,
+  buildStackPlan,
+  type MotionPlan,
+  type PlanBrand,
+  type PlanCopy
+} from './plan.ts';
 import { drawStack } from './stack.ts';
 import { drawBinary } from './binary.ts';
+import { drawArrays } from './arrays.ts';
+import { drawLinked } from './linked.ts';
 import type { Dims } from './stage.ts';
 
 export type { MotionPlan, PlanBrand, PlanCopy } from './plan.ts';
 export { stackStateAt } from './stack.ts';
 export { binaryStateAt } from './binary.ts';
+export { arrayStateAt } from './arrays.ts';
+export { linkedStateAt } from './linked.ts';
 
 export type PlanBrandInput = PlanBrand;
 export type SceneLike = Scene;
@@ -34,7 +46,8 @@ export function planBrand(brand: {
   presenter?: string;
   role?: string;
   closing_line?: string;
-  handle?: string;
+  instagram_handle?: string;
+  linkedin_handle?: string;
   opening_style?: string;
 }): PlanBrand {
   return {
@@ -52,7 +65,8 @@ export function planBrand(brand: {
     closing: String(brand.closing_line || '').trim() || BRAND_DEFAULTS.closing,
     // The closing line stays personal; the call to action is the platform ask.
     cta: String(brand.outro || '').trim() || BRAND_DEFAULTS.cta,
-    handle: String(brand.handle || '').trim() || BRAND_DEFAULTS.handle,
+    instagram: String(brand.instagram_handle || '').trim() || BRAND_DEFAULTS.instagram,
+    linkedin: String(brand.linkedin_handle || '').trim() || BRAND_DEFAULTS.linkedin,
     openingStyle: String(brand.opening_style || '').trim() || 'cinematic'
   };
 }
@@ -96,6 +110,35 @@ export function planFor(args: {
     return buildStackPlan({ scenes, events: run.events, copy, brand });
   }
 
+  if (run.kind === 'array') {
+    if (!run.validation.ok) {
+      throw new Error(`The array trace is not verified: ${run.validation.failures.join(' ')}`);
+    }
+    return buildArrayPlan({
+      scenes,
+      array: run.input,
+      total: run.total,
+      steps: run.arraySteps,
+      copy,
+      brand
+    });
+  }
+
+  if (run.kind === 'linked-list') {
+    if (!run.validation.ok) {
+      throw new Error(`The linked list trace is not verified: ${run.validation.failures.join(' ')}`);
+    }
+    return buildLinkedPlan({
+      scenes,
+      values: run.input,
+      target: run.target ?? 0,
+      foundIndex: run.foundIndex,
+      steps: run.linkedSteps,
+      copy,
+      brand
+    });
+  }
+
   if (run.kind === 'binary-search') {
     if (!run.validation.ok) {
       throw new Error(`The binary search trace is not verified: ${run.validation.failures.join(' ')}`);
@@ -121,7 +164,9 @@ export function planDurationMs(plan: MotionPlan): number {
 /** Paints the plan at `tMs`. */
 export function drawMoment(ctx: SKRSContext2D, plan: MotionPlan, tMs: number, dims: Dims): void {
   if (plan.kind === 'stack') drawStack(ctx, plan, tMs, dims);
-  else drawBinary(ctx, plan, tMs, dims);
+  else if (plan.kind === 'binary') drawBinary(ctx, plan, tMs, dims);
+  else if (plan.kind === 'array') drawArrays(ctx, plan, tMs, dims);
+  else drawLinked(ctx, plan, tMs, dims);
 }
 
 /** Start time of a beat, used for thumbnails and scene previews. */

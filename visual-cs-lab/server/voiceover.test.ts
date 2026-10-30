@@ -23,7 +23,8 @@ const BRAND: PlanBrand = {
   role: 'Aspiring Forward Deployed AI Engineer',
   closing: 'Building at the intersection of AI and software.',
   cta: 'Follow for more visual algorithms',
-  handle: '@muhammadawais',
+  instagram: '@imawais.engineer',
+  linkedin: '@imawais-engineer',
   openingStyle: 'cinematic'
 };
 

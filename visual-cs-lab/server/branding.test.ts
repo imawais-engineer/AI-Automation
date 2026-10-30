@@ -32,7 +32,8 @@ const BRAND: PlanBrand = {
   role: BRAND_DEFAULTS.role,
   closing: BRAND_DEFAULTS.closing,
   cta: BRAND_DEFAULTS.cta,
-  handle: BRAND_DEFAULTS.handle,
+  instagram: BRAND_DEFAULTS.instagram,
+  linkedin: BRAND_DEFAULTS.linkedin,
   openingStyle: 'cinematic'
 };
 

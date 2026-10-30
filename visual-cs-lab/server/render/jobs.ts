@@ -269,10 +269,13 @@ async function encodeMoment(args: {
           ]
         : []),
       '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      // Gradient-heavy motion graphics lose detail fast at high CRF; the HD
-      // master uses 19 and 4K uses 21 (4K has four times the pixels).
-      '-crf', args.crf ?? (profile.height >= 2000 ? '21' : profile.height >= 1900 ? '19' : '21'),
+      '-preset', profile.x264,
+      // Gradient-heavy motion graphics lose detail fast at high CRF; each profile
+      // carries its own quality. The Master profile targets a high bitrate instead,
+      // so the uploaded file is never the bottleneck.
+      ...(profile.bitrate
+        ? ['-b:v', profile.bitrate, '-maxrate', profile.bitrate, '-bufsize', profile.bufsize ?? '32M']
+        : ['-crf', args.crf ?? profile.crf]),
       '-pix_fmt', 'yuv420p',
       '-profile:v', 'high',
       '-g', String(profile.fps * 2),
@@ -694,7 +697,9 @@ export async function sceneClip(
     height: Math.round((width / 9) * 16),
     fps: PROFILES.preview.fps,
     label: `Clip ${width}px`,
-    purpose: 'Scene preview'
+    purpose: 'Scene preview',
+    crf: PROFILES.preview.crf,
+    x264: PROFILES.preview.x264
   };
   const hash = createHash('sha1')
     .update(JSON.stringify({ beat, brand: brand.updated_at, width, fps: profile.fps, v: 2 }))

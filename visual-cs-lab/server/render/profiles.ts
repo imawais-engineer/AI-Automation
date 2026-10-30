@@ -7,7 +7,7 @@
  * frame short of it.
  */
 
-export type Preset = 'preview' | 'hd' | '4k';
+export type Preset = 'preview' | 'hd' | 'master' | '4k';
 
 export type OutputProfile = {
   width: number;
@@ -15,6 +15,14 @@ export type OutputProfile = {
   fps: number;
   label: string;
   purpose: string;
+  /** x264 quality for this profile; lower is better looking and larger. */
+  crf: string;
+  /** x264 speed preset. */
+  x264: string;
+  /** Target bitrate for profiles that must stream at a guaranteed rate. */
+  bitrate?: string;
+  /** VBV buffer that goes with `bitrate`. */
+  bufsize?: string;
 };
 
 export const PROFILES: Record<Preset, OutputProfile> = {
@@ -23,21 +31,39 @@ export const PROFILES: Record<Preset, OutputProfile> = {
     height: 960,
     fps: 30,
     label: 'Preview 540×960',
-    purpose: 'Fast iteration while editing the storyboard.'
+    purpose: 'Fast iteration while editing the storyboard.',
+    crf: '21',
+    x264: 'veryfast'
   },
   hd: {
     width: 1080,
     height: 1920,
     fps: 30,
     label: 'HD Shorts 1080×1920',
-    purpose: 'Default publication output for Reels, Shorts and TikTok.'
+    purpose: 'Default publication output for Reels, Shorts and TikTok.',
+    crf: '19',
+    x264: 'veryfast'
+  },
+  master: {
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    label: 'Master 1080×1920',
+    purpose: 'Highest-quality 1080×1920 upload: near-lossless H.264 at a high bitrate.',
+    crf: '15',
+    x264: 'medium',
+    // A guaranteed 16 Mbit/s: the upload master is not a web-optimised file.
+    bitrate: '16M',
+    bufsize: '32M'
   },
   '4k': {
     width: 2160,
     height: 3840,
     fps: 30,
     label: '4K vertical 2160×3840',
-    purpose: 'Optional high-resolution master; slow and memory hungry.'
+    purpose: 'Optional high-resolution master; slow and memory hungry.',
+    crf: '21',
+    x264: 'veryfast'
   }
 };
 

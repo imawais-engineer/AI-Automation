@@ -9,6 +9,20 @@ import {
   type Validation
 } from './algorithms/stack.ts';
 import {
+  isArrayConfig,
+  traceArray,
+  validateArrayTrace,
+  type ArrayConfig,
+  type ArrayStep
+} from './algorithms/arrays.ts';
+import {
+  isLinkedListConfig,
+  traceLinkedList,
+  validateLinkedListTrace,
+  type LinkedListConfig,
+  type LinkedListStep
+} from './algorithms/linked-lists.ts';
+import {
   isBinarySearchConfig,
   traceBinarySearch,
   validateBinarySearchTrace,
@@ -39,7 +53,22 @@ export type BinarySearchVisual = {
   steps: BinarySearchStep[];
 };
 
-export type SceneVisual = StackVisual | BinarySearchVisual;
+export type ArrayVisual = {
+  kind: 'array';
+  array: number[];
+  total: number;
+  steps: ArrayStep[];
+};
+
+export type LinkedListVisual = {
+  kind: 'linked-list';
+  values: number[];
+  target: number;
+  foundIndex: number | null;
+  steps: LinkedListStep[];
+};
+
+export type SceneVisual = StackVisual | BinarySearchVisual | ArrayVisual | LinkedListVisual;
 
 export type Scene = {
   id: string;
@@ -94,12 +123,18 @@ export type ConceptInput = {
 };
 
 export type ConceptRun = {
-  kind: 'stack' | 'binary-search' | 'none';
+  kind: 'stack' | 'binary-search' | 'array' | 'linked-list' | 'none';
   supported: boolean;
   /** Stack events, empty for other kinds. */
   events: StackEvent[];
   /** Verified binary search steps, empty for other kinds. */
   steps: BinarySearchStep[];
+  /** Verified linked list visits, empty for other kinds. */
+  linkedSteps: LinkedListStep[];
+  /** Verified array visits, empty for other kinds. */
+  arraySteps: ArrayStep[];
+  /** Sum an array trace produced (array kind). */
+  total: number;
   foundIndex: number | null;
   summary: string;
   /** The input the trusted run was produced from (binary search only). */
@@ -139,6 +174,54 @@ export function effectiveConcept(lesson: LessonInput, concept: ConceptInput): Co
 export function runConcept(concept: ConceptInput): ConceptRun {
   const config = readAnimationConfig(concept);
 
+  if (isArrayConfig(config)) {
+    const arrayConfig = config as unknown as ArrayConfig;
+    const trace = traceArray(arrayConfig.array);
+    const validation = validateArrayTrace(trace, arrayConfig.expect, arrayConfig.array);
+    return {
+      kind: 'array',
+      supported: true,
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: trace.steps,
+      total: trace.sum,
+      foundIndex: null,
+      summary: `visits ${trace.steps.length} cells and totals ${trace.sum}`,
+      input: trace.array,
+      target: null,
+      comparisons: trace.steps.length,
+      complexity: { time: 'O(1) access · O(n) traversal', space: 'O(n)', arraySize: trace.array.length, comparisons: trace.steps.length },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isLinkedListConfig(config)) {
+    const listConfig = config as unknown as LinkedListConfig;
+    const trace = traceLinkedList(listConfig.values, listConfig.target);
+    const validation = validateLinkedListTrace(trace, listConfig.expect, listConfig.values, listConfig.target);
+    return {
+      kind: 'linked-list',
+      supported: true,
+      events: [],
+      steps: [],
+      linkedSteps: trace.steps,
+      arraySteps: [],
+      total: 0,
+      foundIndex: trace.foundIndex,
+      summary: trace.foundIndex === null ? `walks ${trace.steps.length} nodes without a match` : `finds ${trace.target} at node ${trace.foundIndex}`,
+      input: trace.values,
+      target: trace.target,
+      comparisons: trace.comparisons,
+      complexity: { time: 'O(n) search', space: 'O(n)', arraySize: trace.values.length, comparisons: trace.comparisons },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
   if (isBinarySearchConfig(config)) {
     const binary = config as unknown as BinarySearchConfig;
     const trace = traceBinarySearch(binary.array, binary.target);
@@ -148,6 +231,9 @@ export function runConcept(concept: ConceptInput): ConceptRun {
       supported: true,
       events: [],
       steps: trace.steps,
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
       foundIndex: trace.foundIndex >= 0 ? trace.foundIndex : null,
       summary: trace.summary,
       input: trace.array,
@@ -168,6 +254,9 @@ export function runConcept(concept: ConceptInput): ConceptRun {
       supported: false,
       events: [],
       steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
       foundIndex: null,
       summary: '',
       input: [],
@@ -187,6 +276,9 @@ export function runConcept(concept: ConceptInput): ConceptRun {
     supported: true,
     events,
     steps: [],
+    linkedSteps: [],
+    arraySteps: [],
+    total: 0,
     foundIndex: null,
     summary: '',
     input: [],
@@ -282,6 +374,9 @@ function closingScene(branding: Branding): Bookend {
 export function minimumDurationMs(branding: Branding, run: ConceptRun): number {
   const bookends = branding.openingMs + branding.endingMs;
   if (run.kind === 'binary-search') return bookends + 12000;
+  // A traversal needs a readable setup, one beat per visited cell and a held result.
+  if (run.kind === 'array') return bookends + 14000 + run.eventCount * 900;
+  if (run.kind === 'linked-list') return bookends + 14000 + run.eventCount * 1100;
   const ops = Math.max(1, run.events.length);
   // 12.6 weight units of fixed explanation beats around 4.2 per operation.
   return bookends + Math.round(((ops * 4.2 + 12.6) / 4.2) * 950);
@@ -456,6 +551,144 @@ function buildBinarySearchScenes(
   });
 }
 
+
+/**
+ * The Arrays lesson body: hook, contiguous-memory setup, the verified traversal
+ * and the access-versus-traversal complexity panel.
+ */
+function buildArrayScenes(
+  lesson: LessonInput,
+  concept: ConceptInput,
+  run: ConceptRun,
+  totalMs: number,
+  branding: Branding
+): Scene[] {
+  const array = run.input;
+  const setup: ArrayVisual = { kind: 'array', array, total: run.total, steps: [] };
+  const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
+    {
+      weight: 2.5,
+      scene: {
+        type: 'hook',
+        title: lesson.hook || 'Reading a cell is one step. Summing them all is not.',
+        subtitle: lesson.objective || concept.summary,
+        caption: lesson.on_screen_text || ''
+      }
+    },
+    {
+      weight: 5,
+      scene: {
+        type: 'concept',
+        title: `${array.length} contiguous cells`,
+        subtitle: concept.plain_explanation || concept.summary,
+        caption: 'Index i lives at base + i × slot — one address calculation, one read.',
+        visual: setup
+      }
+    },
+    {
+      weight: 26,
+      scene: {
+        type: 'trace',
+        title: `Trace · sum all ${array.length} cells`,
+        subtitle: 'i walks left to right · sum += a[i]',
+        caption: 'Add the cell under the pointer, then move the pointer by one.',
+        visual: { ...setup, steps: run.arraySteps }
+      }
+    },
+    {
+      weight: 7,
+      scene: {
+        type: 'complexity',
+        title: lesson.key_takeaway || 'O(1) access is the whole point of an array',
+        subtitle: concept.complexity_time,
+        caption: `Access by index is O(1); this traversal is O(${array.length}). Space: ${concept.complexity_space}.`,
+        facts: [
+          { label: 'Access by index', value: 'O(1) — no walking' },
+          { label: 'Insert or delete in the middle', value: 'O(n) — later cells shift' },
+          { label: 'This traversal', value: `O(n) — ${array.length} cells` }
+        ]
+      }
+    }
+  ];
+
+  return withBookends(specs, totalMs, branding, {
+    opening: openingScene(branding, lesson, concept),
+    ending: closingScene(branding)
+  });
+}
+
+/**
+ * The Linked Lists lesson body: hook, node-and-pointer setup, the verified walk
+ * and the lookup-cost panel.
+ */
+function buildLinkedScenes(
+  lesson: LessonInput,
+  concept: ConceptInput,
+  run: ConceptRun,
+  totalMs: number,
+  branding: Branding
+): Scene[] {
+  const values = run.input;
+  const target = run.target ?? 0;
+  const setup: LinkedListVisual = {
+    kind: 'linked-list',
+    values,
+    target,
+    foundIndex: run.foundIndex,
+    steps: []
+  };
+  const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
+    {
+      weight: 2.5,
+      scene: {
+        type: 'hook',
+        title: lesson.hook || 'No index, no shortcut: you walk the links.',
+        subtitle: lesson.objective || concept.summary,
+        caption: lesson.on_screen_text || ''
+      }
+    },
+    {
+      weight: 5,
+      scene: {
+        type: 'concept',
+        title: `${values.length} nodes chained by next`,
+        subtitle: concept.plain_explanation || concept.summary,
+        caption: 'Each node stores a value and the address of the next node.',
+        visual: setup
+      }
+    },
+    {
+      weight: 26,
+      scene: {
+        type: 'trace',
+        title: `Trace · find ${target}`,
+        subtitle: 'curr = head · then curr = curr.next',
+        caption: `Compare each node with ${target}; stop at the match.`,
+        visual: { ...setup, steps: run.linkedSteps }
+      }
+    },
+    {
+      weight: 7,
+      scene: {
+        type: 'complexity',
+        title: lesson.key_takeaway || 'Cheap to relink, expensive to find',
+        subtitle: concept.complexity_time,
+        caption: `Search is O(n); insert or delete at a known node is O(1). Space: ${concept.complexity_space}.`,
+        facts: [
+          { label: 'Search', value: 'O(n) — from the head, link by link' },
+          { label: 'Insert or delete at a known node', value: 'O(1) — relink two pointers' },
+          { label: 'This walk', value: `${run.comparisons} of ${values.length} nodes` }
+        ]
+      }
+    }
+  ];
+
+  return withBookends(specs, totalMs, branding, {
+    opening: openingScene(branding, lesson, concept),
+    ending: closingScene(branding)
+  });
+}
+
 /**
  * Turns a lesson into the structured scene list the renderer draws. Every scene
  * carries its own duration, so the timeline is data, not code per video.
@@ -470,6 +703,12 @@ export function buildScenes(
   const run = runConcept(concept);
   if (run.kind === 'binary-search' && run.supported) {
     return buildBinarySearchScenes(lesson, concept, totalMs, branding);
+  }
+  if (run.kind === 'array' && run.supported) {
+    return buildArrayScenes(lesson, concept, run, totalMs, branding);
+  }
+  if (run.kind === 'linked-list' && run.supported) {
+    return buildLinkedScenes(lesson, concept, run, totalMs, branding);
   }
   return buildStackScenes(lesson, concept, run, totalMs, branding);
 }
@@ -549,7 +788,7 @@ function storyboardIssues(
     );
   }
   const traceScenes = stored.filter((scene) => scene.type === 'trace');
-  if (run.kind === 'binary-search' && traceScenes.length !== 1) {
+  if ((run.kind === 'binary-search' || run.kind === 'array' || run.kind === 'linked-list') && traceScenes.length !== 1) {
     issues.push(
       `The storyboard needs exactly one trace beat but has ${traceScenes.length} — rebuild the storyboard.`
     );
@@ -595,6 +834,39 @@ function storyboardIssues(
         }
         if (scene.visual.target !== run.target) {
           issues.push(`${label} animates target ${String(scene.visual.target)} but the concept searches for ${String(run.target)} — rebuild the storyboard.`);
+        }
+      } else if (scene.visual.kind === 'array' && run.kind === 'array') {
+        if (!Array.isArray(scene.visual.array) || scene.visual.array.length === 0) {
+          issues.push(`${label} is missing the array it should animate.`);
+        } else if (scene.visual.array.join(',') !== run.input.join(',')) {
+          issues.push(`${label} animates a different array than the concept configuration — rebuild the storyboard.`);
+        }
+        if (scene.visual.steps.length > 0) {
+          if (scene.visual.steps.length !== run.eventCount) {
+            issues.push(
+              `${label} carries ${scene.visual.steps.length} visits but the trusted run has ${run.eventCount} — rebuild the storyboard.`
+            );
+          } else if (scene.visual.total !== run.total) {
+            issues.push(`${label} totals ${scene.visual.total} but the array sums to ${run.total} — rebuild the storyboard.`);
+          }
+        }
+      } else if (scene.visual.kind === 'linked-list' && run.kind === 'linked-list') {
+        if (!Array.isArray(scene.visual.values) || scene.visual.values.length === 0) {
+          issues.push(`${label} is missing the list it should animate.`);
+        } else if (scene.visual.values.join(',') !== run.input.join(',')) {
+          issues.push(`${label} animates a different list than the concept configuration — rebuild the storyboard.`);
+        }
+        if (scene.visual.target !== run.target) {
+          issues.push(`${label} searches for ${String(scene.visual.target)} but the concept looks for ${String(run.target)} — rebuild the storyboard.`);
+        }
+        if (scene.visual.steps.length > 0) {
+          if (scene.visual.steps.length !== run.eventCount) {
+            issues.push(
+              `${label} carries ${scene.visual.steps.length} visits but the trusted walk has ${run.eventCount} — rebuild the storyboard.`
+            );
+          } else if (scene.visual.foundIndex !== run.foundIndex) {
+            issues.push(`${label} reports ${String(scene.visual.foundIndex)} as the match but the trace found ${String(run.foundIndex)} — rebuild the storyboard.`);
+          }
         }
       } else if (scene.visual.kind === 'stack' && run.kind === 'stack') {
         if (!Array.isArray(scene.visual.items)) issues.push(`${label} is missing its stack snapshot.`);

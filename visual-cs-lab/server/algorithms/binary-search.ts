@@ -86,7 +86,12 @@ export function isSortedAscending(array: number[]): boolean {
 export function isBinarySearchConfig(config: unknown): config is BinarySearchConfig {
   if (!config || typeof config !== 'object') return false;
   const candidate = config as Record<string, unknown>;
-  return candidate.kind === 'binary-search' || Array.isArray(candidate.array);
+  // Binary search is a search: it always has a target. An array without one is a
+  // traversal, which the Arrays concept animates instead.
+  return (
+    candidate.kind === 'binary-search' ||
+    (Array.isArray(candidate.array) && candidate.target !== undefined)
+  );
 }
 
 function range(from: number, to: number): number[] {

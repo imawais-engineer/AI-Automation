@@ -15,10 +15,17 @@ export const BRAND_DEFAULTS = {
   presenter: 'Muhammad Awais',
   role: 'Aspiring Forward Deployed AI Engineer',
   closing: 'Building at the intersection of AI and software.',
-  /** The outro's ask, and the handle a viewer can follow. */
+  /** The outro's ask, and the two profiles a viewer can follow. */
   cta: 'Follow for more visual algorithms',
-  handle: '@muhammadawais'
+  instagram: '@imawais.engineer',
+  linkedin: '@imawais-engineer'
 } as const;
+
+/** The two social profiles the outro carries, in the order they are drawn. */
+export const SOCIAL_LINES = [
+  { key: 'instagram', label: 'Instagram' },
+  { key: 'linkedin', label: 'LinkedIn' }
+] as const;
 
 export type OpeningStyle = 'cinematic' | 'minimal' | 'bold';
 
@@ -41,7 +48,8 @@ export type Branding = {
   role: string;
   closing: string;
   cta: string;
-  handle: string;
+  instagram: string;
+  linkedin: string;
   openingMs: number;
   endingMs: number;
   openingStyle: OpeningStyle;
@@ -53,7 +61,8 @@ export type BrandRowLike = {
   role?: string | null;
   closing_line?: string | null;
   outro?: string | null;
-  handle?: string | null;
+  instagram_handle?: string | null;
+  linkedin_handle?: string | null;
   opening_ms?: number | null;
   ending_ms?: number | null;
   opening_style?: string | null;
@@ -78,7 +87,8 @@ export function brandingFrom(brand?: BrandRowLike | null): Branding {
     role: String(brand?.role || '').trim() || BRAND_DEFAULTS.role,
     closing: String(brand?.closing_line || '').trim() || BRAND_DEFAULTS.closing,
     cta: String(brand?.outro || '').trim() || BRAND_DEFAULTS.cta,
-    handle: String(brand?.handle || '').trim() || BRAND_DEFAULTS.handle,
+    instagram: String(brand?.instagram_handle || '').trim() || BRAND_DEFAULTS.instagram,
+    linkedin: String(brand?.linkedin_handle || '').trim() || BRAND_DEFAULTS.linkedin,
     openingMs: clampDuration(brand?.opening_ms, DEFAULT_OPENING_MS, OPENING_MIN_MS, OPENING_MAX_MS),
     endingMs: clampDuration(brand?.ending_ms, DEFAULT_ENDING_MS, ENDING_MIN_MS, ENDING_MAX_MS),
     openingStyle: styleOf(brand?.opening_style),
@@ -130,7 +140,8 @@ export function brandingHash(branding: Branding): string {
     branding.role,
     branding.closing,
     branding.cta,
-    branding.handle,
+    branding.instagram,
+    branding.linkedin,
     branding.openingMs,
     branding.endingMs,
     branding.openingStyle

@@ -64,6 +64,14 @@ function fileFor(lessonId: string, storyHash: string, brandHash: string): string
   return path.join(THUMB_DIR, `${lessonId}-${storyHash.slice(0, 6)}${brandHash.slice(0, 6)}.png`);
 }
 
+/** The JPEG twin of a thumbnail: same frame, saved at quality 95 for uploads. */
+export function jpegFor(pngFile: string): string {
+  return pngFile.replace(/\.png$/i, '.jpg');
+}
+
+/** Quality of the JPEG twin, at the ceiling the export spec asks for. */
+export const THUMB_JPEG_QUALITY = 95;
+
 function store(row: ThumbnailRow): ThumbnailRow {
   db.prepare(
     `INSERT INTO thumbnails (lesson_id, source, file, captured_at_ms, storyboard_hash, branding_hash, width, height, created_at, updated_at)
@@ -86,6 +94,8 @@ function discard(previous: ThumbnailRow | null, next: ThumbnailRow | null): void
   if (!previous?.file || previous.file === next?.file) return;
   try {
     if (existsSync(previous.file)) unlinkSync(previous.file);
+    const jpg = jpegFor(previous.file);
+    if (existsSync(jpg)) unlinkSync(jpg);
   } catch {
     /* a leftover file is harmless */
   }
@@ -140,6 +150,8 @@ export function ensureThumbnail(lessonId: string, opts: { force?: boolean } = {}
 
   const file = fileFor(lessonId, storyHash, brandDigest);
   writeFileSync(file, canvas.encodeSync('png'));
+  // The upload copy: same frame, 1080×1920, JPEG at quality 95.
+  writeFileSync(jpegFor(file), canvas.encodeSync('jpeg', THUMB_JPEG_QUALITY));
   const stamp = nowIso();
   const row = store({
     lesson_id: lessonId,

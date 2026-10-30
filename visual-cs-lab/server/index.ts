@@ -6,11 +6,13 @@ import { createServer as createViteServer } from 'vite';
 
 import { db, newId, nowIso, readBrand, readBranding } from './db.ts';
 import { brandingFrom } from './branding.ts';
-import { ensureThumbnail, saveManualThumbnail, thumbnailStatus } from './render/thumbnails.ts';
+import { ensureThumbnail, jpegFor, saveManualThumbnail, thumbnailStatus } from './render/thumbnails.ts';
+import { buildPublishCopy } from './publish-copy.ts';
 import { parseOps, trace, validate } from './algorithms/stack.ts';
 import { traceBinarySearch } from './algorithms/binary-search.ts';
 import {
   buildScenes,
+  effectiveConcept,
   lessonIssues,
   runConcept,
   safeJson,
@@ -678,10 +680,22 @@ app.get('/api/lessons/:id/thumbnail.png', requireAction('content:read'), (req, r
   if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
   const result = ensureThumbnail(req.params.id);
   if (!result.file) return res.status(404).json({ error: result.error || 'No thumbnail available.' });
-  res.setHeader('Content-Type', 'image/png');
+  const lesson = requireLesson(req.params.id) as { slug?: string; title: string } | null;
+  const name = `${slugify(String(lesson?.slug || lesson?.title || 'lesson'))}_thumbnail.png`;
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Thumbnail-Source', result.row?.source || 'auto');
-  res.sendFile(result.file);
+  res.download(result.file, name);
+});
+
+/** The same frame as JPEG at quality 95, named for the upload field. */
+app.get('/api/lessons/:id/thumbnail.jpg', requireAction('content:read'), (req, res) => {
+  const lesson = requireLesson(req.params.id) as { slug?: string; title: string } | null;
+  if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
+  const result = ensureThumbnail(req.params.id);
+  if (!result.file) return res.status(404).json({ error: result.error || 'No thumbnail available.' });
+  const name = `${slugify(String(lesson.slug || lesson.title || 'lesson'))}_thumbnail.jpg`;
+  res.setHeader('Cache-Control', 'no-store');
+  res.download(jpegFor(result.file), name);
 });
 
 /** Replaces the thumbnail without touching the video. */
@@ -939,12 +953,31 @@ app.get('/api/renders/:id/video', requireAction('content:read'), (req, res) => {
   if (!job || job.state !== 'done' || !job.output_path) {
     return res.status(404).json({ error: 'This render has no finished MP4 yet.' });
   }
-  // The file is named after the person it is presented by, not the internal app.
-  const lesson = db.prepare('SELECT title FROM lessons WHERE id = ?').get(job.lesson_id) as
-    | { title: string }
+  // The upload copy is named for its lesson: arrays_video.mp4, linked-lists_video.mp4.
+  const lesson = db.prepare('SELECT slug, title FROM lessons WHERE id = ?').get(job.lesson_id) as
+    | { slug: string | null; title: string }
     | undefined;
-  const name = `${slugify(readBranding().presenter)}-${slugify(lesson?.title || 'short')}-${job.preset}.mp4`;
+  const name = `${slugify(String(lesson?.slug || lesson?.title || 'short'))}_video.mp4`;
   res.download(job.output_path, name);
+});
+
+/* ------------------------------------------------------------ publish copy */
+
+/** Per-platform post copy for a lesson: Facebook, Instagram, LinkedIn, X, YouTube. */
+app.get('/api/lessons/:id/publish-copy', requireAction('content:read'), (req, res) => {
+  const bundle = lessonBundle(req.params.id);
+  if (!bundle) return res.status(404).json({ error: 'Lesson not found.' });
+  const run = runConcept(effectiveConcept(bundle.lesson, bundle.concept));
+  const copy = buildPublishCopy({
+    title: bundle.lesson.title,
+    hook: bundle.lesson.hook,
+    takeaway: bundle.lesson.key_takeaway,
+    time: bundle.concept.complexity_time,
+    space: bundle.concept.complexity_space,
+    category: String((bundle.concept as unknown as { category?: string }).category || ''),
+    slug: String((bundle.lesson as unknown as { slug?: string }).slug || '')
+  });
+  res.json({ lessonId: req.params.id, copy, verified: run.validation.ok });
 });
 
 /* ---------------------------------------------------------------- publishing */

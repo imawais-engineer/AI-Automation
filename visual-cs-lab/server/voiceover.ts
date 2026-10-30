@@ -299,7 +299,11 @@ export function voiceoverSourceHash(plan: MotionPlan, lesson: LessonInput, conce
     trace:
       plan.kind === 'stack'
         ? plan.ops.map((op) => op.event)
-        : { array: plan.array, target: plan.target, steps: plan.steps.map((window) => window.step) },
+        : plan.kind === 'binary'
+          ? { array: plan.array, target: plan.target, steps: plan.steps.map((window) => window.step) }
+          : plan.kind === 'array'
+            ? { array: plan.array, total: plan.total, steps: plan.steps.map((window) => window.step) }
+            : { values: plan.values, target: plan.target, foundIndex: plan.foundIndex, steps: plan.steps.map((window) => window.step) },
     concept: {
       time: concept.complexity_time,
       space: concept.complexity_space,
@@ -326,6 +330,23 @@ export function verifiedNumbers(plan: MotionPlan): Set<number> {
     }
     allowed.add(plan.ops.length);
     allowed.add(plan.maxSlots);
+  } else if (plan.kind === 'array') {
+    plan.array.forEach((value) => allowed.add(value));
+    allowed.add(plan.array.length);
+    allowed.add(plan.total);
+    allowed.add(plan.steps.length);
+    for (const window of plan.steps) {
+      [window.step.n, window.step.index, window.step.value, window.step.sum].forEach((value) => allowed.add(value));
+    }
+  } else if (plan.kind === 'linked') {
+    plan.values.forEach((value) => allowed.add(value));
+    allowed.add(plan.target);
+    allowed.add(plan.values.length);
+    allowed.add(plan.steps.length);
+    if (plan.foundIndex !== null) allowed.add(plan.foundIndex);
+    for (const window of plan.steps) {
+      [window.step.n, window.step.nodeIndex, window.step.value].forEach((value) => allowed.add(value));
+    }
   } else {
     plan.array.forEach((value) => allowed.add(value));
     allowed.add(plan.target);

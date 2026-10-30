@@ -30,6 +30,7 @@ import type { Beat, StackBlock, StackPlan } from './plan.ts';
 import {
   BAND,
   SAFE,
+  accentTone,
   backdrop,
   brandEnd,
   captionBar,
@@ -40,6 +41,7 @@ import {
   drawPlatform,
   hudHeader,
   hudOperation,
+  inkTone,
   openingReveal,
   paletteOf,
   popCamera,
@@ -258,7 +260,7 @@ function complexityPanel(
     size: 23 * k,
     minSize: 17 * k,
     maxLines: 1,
-    color: rgba(pal.ink, 0.6),
+    color: inkTone(pal, 0.6),
     alpha: panel * (1 - track(p, 0.5, 0.62)),
     group: 'complexity'
   });
@@ -298,7 +300,7 @@ function complexityPanel(
       minSize: 18 * k,
       maxLines: 1,
       align: 'right',
-      color: pal.accent,
+      color: accentTone(pal, pal.accent),
       alpha: panel * (1 - track(p, 0.5, 0.62)),
       group: 'complexity'
     });
@@ -327,6 +329,7 @@ function complexityPanel(
   drawChip(ctx, insetX + 34 * k, insetY + 54 * k, 'EXAMPLE · NOT PART OF THE TRACE', {
     size: 20 * k,
     color: pal.coral,
+    pal,
     align: 'left',
     maxWidth: insetW - 68 * k,
     group: 'complexity'
@@ -349,7 +352,7 @@ function complexityPanel(
     size: 28 * k,
     minSize: 20 * k,
     maxLines: 1,
-    color: rgba(pal.ink, 0.68),
+    color: inkTone(pal, 0.68),
     group: 'complexity'
   });
 
@@ -372,7 +375,7 @@ function complexityPanel(
     minSize: 20 * k,
     maxLines: 1,
     align: 'center',
-    color: pal.coral,
+    color: accentTone(pal, pal.coral),
     group: 'complexity'
   });
 
@@ -380,6 +383,7 @@ function complexityPanel(
   drawChip(ctx, emptyX, plateY - 66 * k - popPulse * 10 * k, 'POP() → EMPTY', {
     size: 26 * k,
     color: pal.coral,
+    pal,
     align: 'center',
     filled: true,
     maxWidth: insetW - 68 * k,
@@ -438,7 +442,7 @@ function lifoOverlay(
     size: 48 * k,
     minSize: 30 * k,
     maxLines: 1,
-    color: pal.accent,
+    color: accentTone(pal, pal.accent),
     alpha,
     group: 'lifo'
   });
@@ -449,7 +453,7 @@ function lifoOverlay(
     size: 28 * k,
     minSize: 20 * k,
     maxLines: 1,
-    color: rgba(pal.ink, 0.78),
+    color: inkTone(pal, 0.78),
     alpha,
     group: 'lifo'
   });
@@ -461,7 +465,7 @@ function lifoOverlay(
     minSize: 18 * k,
     maxLines: 1,
     align: 'right',
-    color: pal.coral,
+    color: accentTone(pal, pal.coral),
     alpha,
     group: 'lifo'
   });
@@ -473,7 +477,7 @@ function lifoOverlay(
     minSize: 17 * k,
     maxLines: 1,
     align: 'right',
-    color: rgba(pal.ink, 0.6),
+    color: inkTone(pal, 0.6),
     alpha,
     group: 'lifo'
   });
@@ -655,7 +659,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
       minSize: 18,
       maxLines: 1,
       align: 'right',
-      color: rgba(pal.ink, 0.42),
+      color: inkTone(pal, 0.42),
       alpha: item.alpha * stageFade,
       group: 'slot-index'
     });
@@ -695,7 +699,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
       size: 21,
       minSize: 16,
       maxLines: 1,
-      color: rgba(pal.ink, 0.6),
+      color: inkTone(pal, 0.6),
       group: 'stage-label'
     });
   }
@@ -729,6 +733,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
     drawChip(ctx, SAFE * k, BAND.kicker * k, 'STACK · LIFO', {
       size: 23 * k,
       color: pal.accent,
+      pal,
       align: 'left',
       alpha,
       maxWidth: dims.width - 2 * SAFE * k,
@@ -742,6 +747,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
     drawChip(ctx, SAFE * k, BAND.kicker * k, 'STACK · LIFO', {
       size: 23 * k,
       color: pal.accent,
+      pal,
       align: 'left',
       alpha,
       maxWidth: dims.width - 2 * SAFE * k,

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { api, type RenderJob, type RenderValidation, type Pipeline } from '../api';
 import RenderQuality from '../components/RenderQuality';
 import RenderCleanup from '../components/RenderCleanup';
+import PublishPanel from '../components/PublishPanel';
 
 const ACTIVE = ['queued', 'rendering', 'encoding', 'validating'];
 
@@ -21,6 +22,7 @@ export default function Renders() {
   const [jobs, setJobs] = useState<RenderJob[]>([]);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -151,9 +153,17 @@ export default function Renders() {
                           {job.id === selected ? 'Hide' : 'Inspect'}
                         </button>
                         {job.state === 'done' && (
-                          <a className="btn ghost" href={`/api/renders/${job.id}/video`}>
-                            Download
-                          </a>
+                          <>
+                            <a className="btn ghost" href={`/api/renders/${job.id}/video`}>
+                              Download
+                            </a>
+                            <button
+                              className={`btn ${job.id === publishing ? 'primary' : ''}`}
+                              onClick={() => setPublishing(job.id === publishing ? null : job.id)}
+                            >
+                              {job.id === publishing ? 'Close publish' : 'Publish'}
+                            </button>
+                          </>
                         )}
                         {(job.state === 'error' || job.state === 'cancelled') && (
                           <button className="btn" onClick={() => act(job.id, 'retry')}>
@@ -174,6 +184,12 @@ export default function Renders() {
           </table>
         )}
       </div>
+
+      {publishing && (() => {
+        const job = jobs.find((item) => item.id === publishing);
+        if (!job || job.state !== 'done') return null;
+        return <PublishPanel key={job.id} lessonId={job.lesson_id} renderId={job.id} />;
+      })()}
 
       {focused && (
         <div className="card">

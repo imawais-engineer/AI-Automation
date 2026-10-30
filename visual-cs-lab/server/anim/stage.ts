@@ -18,7 +18,7 @@ import { BRAND_DEFAULTS } from '../branding.ts';
 import { recordObject, recordPointer, recordText, type Rect } from './audit.ts';
 import { type Side, anchorEdgePoint, chipEdgePoint, overlapArea, placeChip } from './anchors.ts';
 import { drawText, ellipsize, fitText, textWidth } from '../render/layout.ts';
-import { hexToRgb, mix, rgba, roundRect } from '../render/paint.ts';
+import { hexToRgb, mix, mixHex, rgba, roundRect } from '../render/paint.ts';
 import { fontString, type FontRole } from '../render/typography.ts';
 
 export type Dims = { width: number; height: number };
@@ -61,7 +61,9 @@ export type BrandLike = {
   closing?: string;
   /** What the viewer should do next, and where to find the presenter. */
   cta?: string;
-  handle?: string;
+  /** The two social profiles the outro carries. */
+  instagram?: string;
+  linkedin?: string;
 };
 
 export function paletteOf(brand: BrandLike): Palette {
@@ -76,9 +78,48 @@ export function paletteOf(brand: BrandLike): Palette {
     coral: '#ff8a70',
     violet: '#a78bfa',
     dark,
-    // A dark theme keeps the exact strip the renderer shipped with.
-    scrim: dark ? '#050a12' : mix(bg, '#ffffff', 0.82)
+    // A dark theme keeps the exact strip the renderer shipped with. The light
+    // scrim must be hex: every overlay passes it through `rgba()`, which cannot
+    // read `rgb(...)` and falls back to near-black behind dark ink.
+    scrim: dark ? '#050a12' : mixHex(bg, '#ffffff', 0.82)
   };
+}
+
+/**
+ * Faded ink for secondary copy.
+ *
+ * The alphas were tuned on the dark stage, where half-strength light ink still
+ * reads. The same fade on a paper surface falls under a readable contrast, so a
+ * light theme lifts every secondary tone toward full ink; genuinely dim states
+ * (below 0.4) keep their value, because there the fade carries meaning.
+ */
+export function inkTone(pal: Palette, alpha: number): string {
+  const a = clamp01(alpha);
+  if (pal.dark || a < 0.4) return rgba(pal.ink, a);
+  return rgba(pal.ink, clamp01(1 - (1 - a) * 0.42));
+}
+
+/**
+ * An accent used as text. Accents are picked to glow on a dark stage; on paper the
+ * same hue is darkened toward the ink until a label or a value stays readable.
+ */
+export function accentTone(pal: Palette, accent: string, alpha = 1): string {
+  return rgba(pal.dark ? accent : mix(accent, pal.ink, 0.45), alpha);
+}
+
+export type ChipPaint = { surface: string; ink: string; stroke: string };
+
+/**
+ * Surface and ink for an unfilled label chip.
+ *
+ * A dark stage keeps the night pill with accent-coloured text. A light theme draws
+ * a paper pill with tinted dark ink instead: the night pill left dark ink — what a
+ * marker, callout, pointer or toast label inherits — sitting on a near-black fill,
+ * where it could not be read at all.
+ */
+export function chipPaint(pal: Palette, accent: string): ChipPaint {
+  if (pal.dark) return { surface: rgba('#060b14', 0.9), ink: accent, stroke: rgba(accent, 0.6) };
+  return { surface: rgba(pal.scrim, 0.97), ink: mix(accent, pal.ink, 0.55), stroke: rgba(accent, 0.8) };
 }
 
 export const DESIGN_W = 1080;
@@ -271,9 +312,11 @@ export function drawPlatform(
   ctx.fill();
 
   // Top face, drawn in perspective.
+  // A light theme keeps the plinth a lit paper slab: shading it toward near-black
+  // turned the block stand into a dark band under paper blocks.
   const topGradient = ctx.createLinearGradient(0, y - depth, 0, y);
-  topGradient.addColorStop(0, mix(pal.panel, pal.accent, 0.26));
-  topGradient.addColorStop(1, mix(pal.panel, '#050810', 0.5));
+  topGradient.addColorStop(0, mix(pal.panel, pal.accent, pal.dark ? 0.26 : 0.3));
+  topGradient.addColorStop(1, mix(pal.panel, pal.dark ? '#050810' : pal.ink, pal.dark ? 0.5 : 0.18));
   ctx.fillStyle = topGradient;
   ctx.beginPath();
   ctx.moveTo(x, y);
@@ -288,8 +331,8 @@ export function drawPlatform(
 
   // Front lip.
   const lipGradient = ctx.createLinearGradient(0, y, 0, y + lip);
-  lipGradient.addColorStop(0, mix(pal.panel, '#000000', 0.15));
-  lipGradient.addColorStop(1, mix(pal.panel, '#000000', 0.72));
+  lipGradient.addColorStop(0, mix(pal.panel, pal.dark ? '#000000' : pal.ink, pal.dark ? 0.15 : 0.08));
+  lipGradient.addColorStop(1, mix(pal.panel, pal.dark ? '#000000' : pal.ink, pal.dark ? 0.72 : 0.3));
   ctx.fillStyle = lipGradient;
   roundRect(ctx, x, y - 6, w, lip, 10);
   ctx.fill();
@@ -364,32 +407,41 @@ export function drawBlock(ctx: SKRSContext2D, opts: BlockOptions): void {
     ctx.fill();
   }
 
-  // Contact shadow directly beneath the block.
+  // Contact shadow directly beneath the block. A light surface takes a soft one:
+  // the deep shadow that anchors a lit block on a dark stage would smear a paper one.
   const shadow = ctx.createRadialGradient(cx, opts.y + h + 12, 4, cx, opts.y + h + 12, w * 0.62);
-  shadow.addColorStop(0, `rgba(0,0,0,${0.52 * alpha})`);
+  shadow.addColorStop(0, `rgba(0,0,0,${(pal.dark ? 0.52 : 0.18) * alpha})`);
   shadow.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = shadow;
   ctx.beginPath();
   ctx.ellipse(cx, opts.y + h + 10, w * 0.6, h * 0.22, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  const faceTop =
-    tone === 'match'
+  // Face tones. A dark stage shades toward near-black navy; a light theme shades
+  // toward the ink instead, so the block stays a paper face carrying dark ink —
+  // mixing a light panel toward navy produced a slate face whose dark value could
+  // not be read.
+  const lift = tone === 'match' ? pal.coral : tone === 'active' ? pal.violet : pal.accent;
+  const liftAmount = tone === 'match' ? 0.5 : tone === 'active' ? 0.34 : tone === 'dim' ? 0.1 : 0.16;
+  const faceTop = pal.dark
+    ? tone === 'match'
       ? mix(pal.panel, pal.coral, 0.42)
       : tone === 'active'
         ? mix(pal.panel, pal.violet, 0.3)
         : tone === 'dim'
           ? mix(pal.panel, '#05070c', 0.25)
-          : mix(pal.panel, '#2c3c57', 0.32);
-  const faceBottom =
-    tone === 'match'
+          : mix(pal.panel, '#2c3c57', 0.32)
+    : mix(pal.panel, lift, liftAmount);
+  const faceBottom = pal.dark
+    ? tone === 'match'
       ? mix(pal.panel, pal.coral, 0.06)
       : tone === 'active'
         ? mix(pal.panel, '#05070c', 0.5)
-        : mix(pal.panel, '#04060c', 0.62);
+        : mix(pal.panel, '#04060c', 0.62)
+    : mix(faceTop, pal.ink, tone === 'dim' ? 0.24 : 0.14);
 
   // Right plane (shadow side).
-  ctx.fillStyle = mix(faceBottom, '#000000', 0.45);
+  ctx.fillStyle = pal.dark ? mix(faceBottom, '#000000', 0.45) : mix(faceBottom, pal.ink, 0.18);
   ctx.beginPath();
   ctx.moveTo(opts.x + w, opts.y);
   ctx.lineTo(opts.x + w + dx, opts.y - dy);
@@ -410,7 +462,7 @@ export function drawBlock(ctx: SKRSContext2D, opts: BlockOptions): void {
   ctx.lineTo(opts.x + w, opts.y);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = rgba(pal.ink, 0.16);
+  ctx.strokeStyle = rgba(pal.ink, pal.dark ? 0.16 : 0.22);
   ctx.lineWidth = 1.2;
   ctx.stroke();
 
@@ -423,13 +475,13 @@ export function drawBlock(ctx: SKRSContext2D, opts: BlockOptions): void {
   ctx.fill();
 
   const edge = tone === 'match' ? pal.coral : tone === 'active' ? pal.violet : pal.accent;
-  ctx.strokeStyle = rgba(edge, tone === 'dim' ? 0.14 : 0.36);
+  ctx.strokeStyle = pal.dark ? rgba(edge, tone === 'dim' ? 0.14 : 0.36) : rgba(edge, tone === 'dim' ? 0.3 : 0.6);
   ctx.lineWidth = 2.2;
   roundRect(ctx, opts.x, opts.y, w, h, Math.round(h * 0.14));
   ctx.stroke();
 
   // Inner top highlight, so the solid reads as a lit surface.
-  ctx.strokeStyle = rgba('#ffffff', tone === 'dim' ? 0.06 : 0.16);
+  ctx.strokeStyle = rgba(pal.dark ? '#ffffff' : pal.ink, tone === 'dim' ? 0.06 : 0.16);
   ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.moveTo(opts.x + w * 0.05, opts.y + 4);
@@ -448,7 +500,16 @@ export function drawBlock(ctx: SKRSContext2D, opts: BlockOptions): void {
   }
 
   // The value is data, so it is set in the mono face and fitted to the face.
-  const inkColor = tone === 'dim' ? rgba(pal.ink, 0.42) : tone === 'match' ? '#fff6f2' : pal.ink;
+  // A matched block is a light peach on a paper theme, so its value is the ink, not
+  // the near-white that reads on the dark stage's coral blend.
+  const inkColor =
+    tone === 'dim'
+      ? rgba(pal.ink, pal.dark ? 0.42 : 0.65)
+      : tone === 'match'
+        ? pal.dark
+          ? '#fff6f2'
+          : pal.ink
+        : pal.ink;
   drawText(ctx, String(opts.value), {
     box: { x: opts.x + w * 0.14, y: opts.y + h * 0.2, w: w * 0.72, h: h * 0.62 },
     role: 'mono',
@@ -537,14 +598,16 @@ export function drawAnchorLabel(ctx: SKRSContext2D, opts: AnchorLabelOptions): R
   ctx.arc(tail.x, tail.y, 5.5, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = opts.filled ? opts.color : rgba('#060b14', 0.9);
+  // An unfilled label is a paper pill on a light theme, so its ink stays the ink.
+  const paint = chipPaint(opts.pal, opts.color);
+  ctx.fillStyle = opts.filled ? opts.color : paint.surface;
   roundRect(ctx, chip.x, chip.y, chip.w, chip.h, Math.round(chip.h / 2));
   ctx.fill();
-  ctx.strokeStyle = opts.filled ? rgba('#000000', 0.18) : rgba(opts.color, 0.6);
+  ctx.strokeStyle = opts.filled ? rgba('#000000', 0.18) : paint.stroke;
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  const ink = opts.filled ? '#06101a' : opts.color;
+  const ink = opts.filled ? '#06101a' : paint.ink;
   if (opts.sub) {
     drawText(ctx, opts.label, {
       box: { x: chip.x + padX * 0.4, y: chip.y + chip.h * 0.14, w: chip.w - padX * 0.8, h: chip.h * 0.48 },
@@ -568,7 +631,7 @@ export function drawAnchorLabel(ctx: SKRSContext2D, opts: AnchorLabelOptions): R
       maxLines: 1,
       align: 'center',
       valign: 'middle',
-      color: opts.filled ? rgba('#06101a', 0.75) : rgba(opts.pal.ink, 0.82),
+      color: opts.filled ? rgba('#06101a', 0.75) : rgba(ink, 0.8),
       group: opts.group,
       truncateOk: true
     });
@@ -613,6 +676,8 @@ export function drawChip(
     maxWidth?: number;
     group?: string;
     role?: FontRole;
+    /** The frame's palette, so a light theme can draw a paper pill with dark ink. */
+    pal?: Palette;
     /** Set when a cut is expected and should not be reported by the audit. */
     truncateOk?: boolean;
   }
@@ -622,6 +687,7 @@ export function drawChip(
   const height = opts.height ?? Math.round(size * 2.05);
   const alpha = clamp01(opts.alpha ?? 1);
   const maxWidth = opts.maxWidth ?? DESIGN_W - SAFE * 2;
+  const paint = opts.pal ? chipPaint(opts.pal, opts.color) : null;
   ctx.save();
   ctx.globalAlpha = alpha;
   const padX = opts.padX ?? Math.round(size * 0.72);
@@ -633,16 +699,16 @@ export function drawChip(
   if (opts.filled) {
     ctx.fillStyle = opts.color;
   } else {
-    ctx.fillStyle = rgba('#060b14', 0.85);
+    ctx.fillStyle = paint ? paint.surface : rgba('#060b14', 0.85);
   }
   roundRect(ctx, left, y - height / 2, width, height, Math.round(height / 2));
   ctx.fill();
-  ctx.strokeStyle = opts.filled ? rgba('#000000', 0.15) : rgba(opts.color, 0.55);
+  ctx.strokeStyle = opts.filled ? rgba('#000000', 0.15) : paint ? paint.stroke : rgba(opts.color, 0.55);
   ctx.lineWidth = 2;
   ctx.stroke();
 
   ctx.font = fontString(role, opts.weight ?? 600, size);
-  ctx.fillStyle = opts.filled ? '#06101a' : opts.color;
+  ctx.fillStyle = opts.filled ? '#06101a' : paint ? paint.ink : opts.color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(cut.text, left + width / 2, y + 1);
@@ -682,7 +748,7 @@ export function hudHeader(
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.font = fontString('mono', 600, size);
-  ctx.fillStyle = rgba(pal.ink, 0.5);
+  ctx.fillStyle = inkTone(pal, 0.5);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.fillText(watermark, S, baseline);
@@ -690,9 +756,9 @@ export function hudHeader(
   const restWidth = width - watermarkWidth - 24 * k;
   const step = ellipsize(ctx, opts.step, Math.max(0, restWidth), 'mono', 600, size);
   ctx.textAlign = 'right';
-  ctx.fillStyle = rgba(pal.ink, 0.62);
+  ctx.fillStyle = inkTone(pal, 0.62);
   ctx.fillText(step.text, dims.width - S, baseline);
-  ctx.fillStyle = rgba(pal.ink, 0.12);
+  ctx.fillStyle = rgba(pal.ink, pal.dark ? 0.12 : 0.2);
   ctx.fillRect(S, BAND.headerRule * k, width, Math.max(1, 1.4 * k));
   ctx.restore();
 }
@@ -739,7 +805,7 @@ export function hudOperation(
     minSize: 20 * k,
     maxLines: 2,
     lineHeight: 1.24,
-    color: rgba(pal.ink, 0.68),
+    color: inkTone(pal, 0.68),
     group: 'operation-detail'
   });
   ctx.restore();
@@ -786,15 +852,19 @@ export function toast(
   const height = textFit.height + (subFit?.height ?? 0) + (subFit ? 30 * k : 24 * k);
   const top = centerY - height / 2;
 
+  // A result card on a light theme is paper with tinted ink, not night with dark
+  // secondary copy: the sub-line inherited the ink and vanished on the dark fill.
+  const paint = chipPaint(pal, opts.color);
+
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.translate(dims.width / 2, centerY);
   ctx.scale(scale, scale);
   ctx.translate(-dims.width / 2, -centerY);
-  ctx.fillStyle = rgba('#050a12', 0.92);
+  ctx.fillStyle = paint.surface;
   roundRect(ctx, (dims.width - width) / 2, top, width, height, Math.min(height / 2, 40 * k));
   ctx.fill();
-  ctx.strokeStyle = rgba(opts.color, 0.72);
+  ctx.strokeStyle = pal.dark ? rgba(opts.color, 0.72) : paint.stroke;
   ctx.lineWidth = 2.4 * k;
   ctx.stroke();
   ctx.restore();
@@ -807,7 +877,7 @@ export function toast(
     minSize: 26 * k,
     maxLines: 1,
     align: 'center',
-    color: opts.color,
+    color: paint.ink,
     alpha,
     group: 'result'
   });
@@ -826,7 +896,7 @@ export function toast(
       maxLines: 2,
       lineHeight: 1.25,
       align: 'center',
-      color: rgba(pal.ink, 0.7),
+      color: rgba(paint.ink, 0.75),
       alpha,
       group: 'result'
     });
@@ -872,10 +942,12 @@ export function captionBar(
 
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = rgba(pal.scrim, 0.8);
+  // The strip carries body copy, so a paper theme keeps it nearly opaque: at the
+  // dark stage's transparency the animation glow showed through the words.
+  ctx.fillStyle = rgba(pal.scrim, pal.dark ? 0.8 : 0.93);
   roundRect(ctx, S, top, cardWidth, cardH, 22 * k);
   ctx.fill();
-  ctx.strokeStyle = rgba(pal.accent, 0.2);
+  ctx.strokeStyle = rgba(pal.accent, pal.dark ? 0.2 : 0.32);
   ctx.lineWidth = 1.4 * k;
   ctx.stroke();
   ctx.fillStyle = rgba(opts.accent ?? pal.accent, 0.95);
@@ -893,7 +965,7 @@ export function captionBar(
     minSize: 22 * k,
     maxLines: 3,
     lineHeight: 1.36,
-    color: rgba(pal.ink, 0.9),
+    color: inkTone(pal, 0.9),
     alpha,
     group: 'caption'
   });
@@ -1021,6 +1093,7 @@ export function openingReveal(
     drawChip(ctx, cx, 452 * k, opening.kicker.toUpperCase(), {
       size: 22 * k,
       color: pal.accent,
+      pal,
       align: 'center',
       alpha: kickerIn * outro,
       maxWidth: width * 0.8,
@@ -1087,7 +1160,7 @@ export function openingReveal(
       minSize: 16 * k,
       maxLines: 1,
       align: 'center',
-      color: rgba(pal.ink, 0.5),
+      color: inkTone(pal, 0.5),
       alpha: creditIn * outro,
       group: 'open-credit'
     });
@@ -1111,13 +1184,133 @@ export function openingReveal(
       minSize: 20 * k,
       maxLines: 1,
       align: 'center',
-      color: rgba(pal.accent, 0.85),
+      color: accentTone(pal, pal.accent, 0.85),
       alpha: creditIn * outro,
       group: 'open-role'
     });
   }
 
   ctx.restore();
+}
+
+
+/* ------------------------------------------------------- social marks */
+
+const SOCIAL_KEYS = ['instagram', 'linkedin'] as const;
+
+/** The Instagram glyph: rounded square, lens circle and the flash dot. */
+function instagramMark(ctx: SKRSContext2D, x: number, y: number, size: number, color: string, alpha: number): void {
+  const pad = size * 0.11;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1.6, size * 0.085);
+  roundRect(ctx, x, y, size, size, size * 0.3);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x + size / 2, y + size / 2, size * 0.25, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x + size * 0.76, y + size * 0.24, size * 0.062, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  void pad;
+}
+
+/** The LinkedIn glyph: solid square with the knockout "in". */
+function linkedinMark(
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  size: number,
+  color: string,
+  knock: string,
+  alpha: number
+): void {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  roundRect(ctx, x, y, size, size, size * 0.2);
+  ctx.fill();
+  ctx.fillStyle = knock;
+  ctx.font = fontString('display', 700, size * 0.6);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('in', x + size / 2, y + size / 2 + size * 0.02);
+  ctx.restore();
+}
+
+/**
+ * One social line: the platform mark and the handle, drawn as a single centred
+ * unit so both lines share the same mark size, gap and optical alignment.
+ */
+function socialLine(
+  ctx: SKRSContext2D,
+  cx: number,
+  y: number,
+  key: 'instagram' | 'linkedin',
+  handle: string,
+  pal: Palette,
+  k: number,
+  alpha: number
+): number {
+  const size = 34 * k;
+  const gap = 14 * k;
+  const textSize = 26 * k;
+  const value = String(handle || '').trim();
+  if (!value) return 0;
+  const width = textWidth(ctx, value, 'mono', 600, textSize);
+  const left = cx - (size + gap + width) / 2;
+  if (key === 'instagram') {
+    instagramMark(ctx, left, y - size / 2, size, inkTone(pal, 0.9), alpha);
+  } else {
+    linkedinMark(ctx, left, y - size / 2, size, inkTone(pal, 0.9), pal.dark ? '#0b1220' : '#ffffff', alpha);
+  }
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = fontString('mono', 600, textSize);
+  ctx.fillStyle = inkTone(pal, 0.86);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(value, left + size + gap, y + 1);
+  ctx.restore();
+  return size + gap + width;
+}
+
+
+/**
+ * The video's hook line, shown at the top of the opening beat so the premise is
+ * readable inside the first second — before the title finishes rising.
+ */
+export function openingHook(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  value: string,
+  alpha: number
+): void {
+  const text = String(value || '').trim();
+  const a = clamp01(alpha);
+  if (!text || a <= 0.01) return;
+  const k = dims.width / DESIGN_W;
+  const S = SAFE * k;
+  const width = dims.width - S * 2;
+  const box = { x: S, y: 268 * k, w: width, h: 148 * k };
+  drawText(ctx, text, {
+    box,
+    role: 'display',
+    weight: 600,
+    size: 44 * k,
+    minSize: 26 * k,
+    maxLines: 2,
+    lineHeight: 1.18,
+    align: 'center',
+    valign: 'middle',
+    color: inkTone(pal, 0.92),
+    alpha: a,
+    group: 'open-hook'
+  });
 }
 
 /**
@@ -1193,7 +1386,7 @@ export function brandEnd(
     minSize: 22 * k,
     maxLines: 1,
     align: 'center',
-    color: rgba(pal.ink, 0.72),
+    color: inkTone(pal, 0.72),
     alpha: roleIn,
     group: 'brand-role'
   });
@@ -1207,7 +1400,7 @@ export function brandEnd(
     maxLines: 2,
     lineHeight: 1.32,
     align: 'center',
-    color: rgba(pal.ink, 0.9),
+    color: inkTone(pal, 0.9),
     alpha: closeIn,
     group: 'brand-closing'
   });
@@ -1219,6 +1412,7 @@ export function brandEnd(
       drawChip(ctx, cx, ruleY + 300 * k, brand.cta, {
         size: 28 * k,
         color: pal.accent,
+        pal,
         align: 'center',
         filled: true,
         alpha: ctaIn,
@@ -1226,19 +1420,11 @@ export function brandEnd(
         group: 'brand-cta'
       });
     }
-    if (brand.handle) {
-      drawText(ctx, brand.handle, {
-        box: { x: SAFE * k, y: ruleY + 348 * k, w: width, h: 44 * k },
-        role: 'mono',
-        weight: 600,
-        size: 28 * k,
-        minSize: 20 * k,
-        maxLines: 1,
-        align: 'center',
-        color: rgba(pal.ink, 0.66),
-        alpha: ctaIn,
-        group: 'brand-handle'
-      });
+    const socialIn = easeOutCubic(track(p, 0.58, 0.94));
+    if (socialIn > 0.01) {
+      // Exactly two lines, in a fixed order, each mark the same size.
+      socialLine(ctx, cx, ruleY + 384 * k, 'instagram', brand.instagram || '', pal, k, socialIn);
+      socialLine(ctx, cx, ruleY + 444 * k, 'linkedin', brand.linkedin || '', pal, k, socialIn);
     }
   }
 

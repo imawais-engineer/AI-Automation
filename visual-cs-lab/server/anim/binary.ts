@@ -27,14 +27,17 @@ import type { Rect } from './anchors.ts';
 import {
   BAND,
   SAFE,
+  accentTone,
   backdrop,
   brandEnd,
   captionBar,
   curtain,
+  chipPaint,
   drawBlock,
   drawChip,
   hudHeader,
   hudOperation,
+  inkTone,
   openingReveal,
   paletteOf,
   popCamera,
@@ -266,6 +269,9 @@ function drawMarkers(
   ctx.save();
   ctx.globalAlpha = alpha;
   for (const marker of placed) {
+    // A light theme draws the marker as paper with tinted ink, so a MID label that
+    // was dark ink on a night pill cannot disappear.
+    const markerPaint = chipPaint(pal, marker.color);
     const target = blockRect(plan, marker.index);
     const tail = { x: marker.stemX, y: target.y };
     const head = { x: marker.rect.x + marker.rect.w / 2, y: marker.rect.y + marker.rect.h };
@@ -285,11 +291,11 @@ function drawMarkers(
     ctx.arc(tail.x, tail.y, 5.5, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = marker.filled ? marker.color : rgba('#060b14', 0.9);
+    ctx.fillStyle = marker.filled ? marker.color : markerPaint.surface;
     roundRect(ctx, marker.rect.x, marker.rect.y, marker.rect.w, marker.rect.h, marker.rect.h / 2);
     ctx.fill();
     ctx.strokeStyle = marker.filled ? rgba('#000000', 0.18) : rgba(marker.color, 0.6);
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = marker.filled ? rgba('#000000', 0.18) : markerPaint.stroke;
     ctx.stroke();
 
     drawText(ctx, marker.label, {
@@ -301,7 +307,7 @@ function drawMarkers(
       maxLines: 1,
       align: 'center',
       valign: 'middle',
-      color: marker.filled ? '#06101a' : marker.color,
+      color: marker.filled ? '#06101a' : markerPaint.ink,
       alpha,
       group: `marker-${marker.key}`
     });
@@ -343,7 +349,7 @@ function drawMarkers(
     minSize: 17,
     maxLines: 1,
     align: 'center',
-    color: rgba(pal.ink, 0.62),
+    color: inkTone(pal, 0.62),
     alpha,
     group: 'range-label'
   });
@@ -375,6 +381,7 @@ function comparisonCallout(
   drawChip(ctx, x, CALLOUT_Y, label, {
     size: 30,
     color,
+    pal,
     align: 'left',
     filled: step.comparison === 'equal',
     maxWidth: width,
@@ -425,8 +432,7 @@ function halvingPanel(
     weight: 400,
     size: 23 * k,
     minSize: 16 * k,
-    maxLines: 1,
-    color: rgba(pal.ink, 0.6),
+    color: inkTone(pal, 0.6),
     alpha,
     group: 'halving'
   });
@@ -451,8 +457,7 @@ function halvingPanel(
       weight: 600,
       size: 22 * k,
       minSize: 16 * k,
-      maxLines: 1,
-      color: rgba(pal.ink, 0.78),
+      color: inkTone(pal, 0.78),
       alpha: alpha * appear,
       group: 'halving'
     });
@@ -473,6 +478,7 @@ function halvingPanel(
     size: 22 * k,
     color: pal.accent,
     align: 'left',
+    pal,
     maxWidth: (w - 68 * k) / 2,
     alpha,
     group: 'halving'
@@ -481,6 +487,7 @@ function halvingPanel(
     size: 22 * k,
     color: pal.violet,
     align: 'right',
+    pal,
     maxWidth: (w - 68 * k) / 2,
     alpha,
     group: 'halving'
@@ -558,7 +565,7 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
       value,
       pal,
       tone,
-      alpha: arrayAlpha * (1 - discarded * 0.66),
+      alpha: arrayAlpha * (1 - discarded * (pal.dark ? 0.66 : 0.46)),
       scale: isMatch ? 1 + 0.05 * bump(tMs, (plan.steps[plan.steps.length - 1]?.endMs ?? 0) - 300, 900) : 1,
       glow,
       valueSize: BLOCK_W * 0.44,
@@ -573,7 +580,7 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
       minSize: 17,
       maxLines: 1,
       align: 'center',
-      color: rgba(pal.ink, inRange ? 0.64 : 0.28),
+      color: inRange ? inkTone(pal, 0.64) : rgba(pal.ink, pal.dark ? 0.28 : 0.45),
       alpha: arrayAlpha,
       group: 'index-label'
     });
@@ -606,10 +613,9 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
         role: 'mono',
         weight: 400,
         size: 23,
-        minSize: 16,
         maxLines: 1,
         align: 'center',
-        color: rgba(pal.coral, 0.8),
+        color: accentTone(pal, pal.coral, 0.8),
         alpha: arrayAlpha * 0.9,
         group: 'discarded'
       });
@@ -651,6 +657,7 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
   drawChip(ctx, SAFE * k, BAND.kicker * k, `TARGET ${plan.target}`, {
     size: 24 * k,
     color: pal.coral,
+    pal,
     align: 'left',
     filled: true,
     alpha: targetAlpha,
@@ -660,6 +667,7 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
   drawChip(ctx, dims.width - SAFE * k, BAND.kicker * k, `SORTED · ${plan.array.length} VALUES`, {
     size: 21 * k,
     color: pal.accent,
+    pal,
     align: 'right',
     alpha: targetAlpha * 0.95,
     maxWidth: (dims.width - 2 * SAFE * k) * 0.45,

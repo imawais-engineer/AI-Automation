@@ -263,7 +263,7 @@ export function verifyPlanStates(plan: MotionPlan): SceneCheck {
         problems.push(`STEP ${op.index + 1} TOP shows ${String(shown.top)} but should be ${String(expectedTop)}`);
       }
     }
-  } else {
+  } else if (plan.kind === 'binary') {
     for (const window of plan.steps) {
       const at = Math.max(window.startMs, window.endMs - 1);
       const shown = binaryStateAt(plan, at);

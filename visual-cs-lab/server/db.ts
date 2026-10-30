@@ -185,8 +185,10 @@ ensureColumn('brand', 'opening_ms', 'INTEGER NOT NULL DEFAULT 2500');
 ensureColumn('brand', 'ending_ms', 'INTEGER NOT NULL DEFAULT 2500');
 ensureColumn('brand', 'opening_style', "TEXT NOT NULL DEFAULT 'cinematic'");
 ensureColumn('brand', 'auto_thumbnail', 'INTEGER NOT NULL DEFAULT 1');
-/** The handle shown with the closing call to action. */
+/** The profiles shown with the closing call to action. */
 ensureColumn('brand', 'handle', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('brand', 'instagram_handle', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('brand', 'linkedin_handle', "TEXT NOT NULL DEFAULT ''");
 
 const brandRow = db.prepare('SELECT id FROM brand WHERE id = 1').get();
 if (!brandRow) {
@@ -228,6 +230,8 @@ if (!brandRow) {
  */
 db.prepare(
   `UPDATE brand SET
+     instagram_handle = CASE WHEN trim(instagram_handle) = '' THEN ? ELSE instagram_handle END,
+     linkedin_handle = CASE WHEN trim(linkedin_handle) = '' THEN ? ELSE linkedin_handle END,
      presenter = CASE WHEN trim(presenter) = '' THEN ? ELSE presenter END,
      role = CASE WHEN trim(role) = '' THEN ? ELSE role END,
      closing_line = CASE WHEN trim(closing_line) = '' THEN ? ELSE closing_line END,
@@ -235,6 +239,8 @@ db.prepare(
      watermark = CASE WHEN trim(watermark) IN ('', 'Visual CS Lab', 'VS Lab', 'Visual CS') THEN ? ELSE watermark END
    WHERE id = 1`
 ).run(
+  BRAND_DEFAULTS.instagram,
+  BRAND_DEFAULTS.linkedin,
   BRAND_DEFAULTS.presenter,
   BRAND_DEFAULTS.role,
   BRAND_DEFAULTS.closing,
@@ -348,8 +354,9 @@ const SEED: SeedConcept[] = [
     pseudocode: 'READ(a, i): return a[i]\nINSERT(a, i, x): shift a[i..] right, a[i] = x',
     time: 'O(1) access, O(n) insert/delete',
     space: 'O(n)',
-    exampleInput: '[4, 8, 15, 16, 23], read index 2',
-    expectedOutput: '15',
+    exampleInput: '[4, 8, 15, 16, 23], sum every cell',
+    expectedOutput: '66',
+    animation: { array: [4, 8, 15, 16, 23], expect: { sum: 66 } },
     related: ['linked-lists', 'stacks']
   },
   {
@@ -366,8 +373,9 @@ const SEED: SeedConcept[] = [
     pseudocode: 'WALK(head):\n  node = head\n  while node != null:\n    visit(node)\n    node = node.next',
     time: 'O(1) insert/delete at a node, O(n) search',
     space: 'O(n)',
-    exampleInput: '1 -> 2 -> 3, insert 4 after 3',
-    expectedOutput: '1 -> 2 -> 3 -> 4',
+    exampleInput: '4 -> 7 -> 9 -> 12 -> 20, find 9',
+    expectedOutput: 'node 2 (two links followed)',
+    animation: { values: [4, 7, 9, 12, 20], target: 9, expect: { foundIndex: 2 } },
     related: ['arrays', 'stacks', 'queues']
   },
   {
@@ -974,6 +982,8 @@ export type Brand = {
   role: string;
   closing_line: string;
   handle: string;
+  instagram_handle: string;
+  linkedin_handle: string;
   opening_ms: number;
   ending_ms: number;
   opening_style: string;

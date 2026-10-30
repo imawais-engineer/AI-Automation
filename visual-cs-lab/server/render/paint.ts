@@ -24,6 +24,19 @@ export function mix(hex: string, target: string, amount: number): string {
   return `rgb(${channel(r1, r2)},${channel(g1, g2)},${channel(b1, b2)})`;
 }
 
+/**
+ * Mix two hex colours and return hex, for palette tokens that are later passed to
+ * `rgba()`. `mix` returns `rgb(...)`, which `rgba` cannot read — its fallback is
+ * near-black, which is how a paper surface became an unreadable night card.
+ */
+export function mixHex(hex: string, target: string, amount: number): string {
+  const [r1, g1, b1] = hexToRgb(hex);
+  const [r2, g2, b2] = hexToRgb(target);
+  const channel = (a: number, b: number) => Math.round(a + (b - a) * amount);
+  const part = (value: number) => value.toString(16).padStart(2, '0');
+  return `#${part(channel(r1, r2))}${part(channel(g1, g2))}${part(channel(b1, b2))}`;
+}
+
 export function roundRect(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const radius = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
