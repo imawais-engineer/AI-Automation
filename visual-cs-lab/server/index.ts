@@ -25,6 +25,8 @@ import { inspectPlan } from './anim/inspect.ts';
 import { motionForLesson } from './motion.ts';
 import { formatVoiceover } from './voiceover.ts';
 import { generateVoiceoverFor, saveVoiceoverEdits, voiceoverState } from './voiceover-store.ts';
+import { generateNarrationFor, narrationStatus } from './tts/narration.ts';
+import { createAudioVariant } from './render/variants.ts';
 import { parseValidation } from './render/quality.ts';
 import { assertFontsLoaded, fontStatus } from './render/typography.ts';
 import {
@@ -538,6 +540,39 @@ app.patch('/api/lessons/:id/voiceover', requireAction('content:write'), (req, re
     voiceover: result.status,
     markdown: script ? formatVoiceover(script) : ''
   });
+});
+
+/* ------------------------------------------------------------------ narration */
+
+/** The takes recorded for this lesson, plus which provider is usable right now. */
+app.get('/api/lessons/:id/narration', requireAction('content:read'), (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  res.json(narrationStatus(req.params.id));
+});
+
+/** Speaks the current voice-over script and records the take in the audio library. */
+app.post('/api/lessons/:id/narration', requireAction('content:write'), async (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  const speed = Number(req.body?.speed);
+  const expressivity = Number(req.body?.expressivity);
+  const result = await generateNarrationFor(req.params.id, {
+    provider: req.body?.provider ? String(req.body.provider) : undefined,
+    model: req.body?.model ? String(req.body.model) : undefined,
+    speed: Number.isFinite(speed) ? speed : undefined,
+    expressivity: Number.isFinite(expressivity) ? expressivity : undefined
+  });
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.status(201).json({ take: result.take, durationSeconds: result.durationSeconds, narration: narrationStatus(req.params.id) });
+});
+
+/** Remuxes a narration take under the validated silent master. */
+app.post('/api/lessons/:id/narration/export', requireAction('render:run'), async (req, res) => {
+  if (!requireLesson(req.params.id)) return res.status(404).json({ error: 'Lesson not found.' });
+  const trackId = String(req.body?.trackId || '');
+  if (!trackId) return res.status(400).json({ error: 'Choose a narration take to export.' });
+  const result = await createAudioVariant({ lessonId: req.params.id, audioMode: 'voiceover', narrationTrackId: trackId });
+  if (result.error && !result.asset) return res.status(400).json({ error: result.error });
+  res.status(result.error ? 422 : 201).json({ asset: result.asset, warning: result.error || null });
 });
 
 /** Layout, pointer and algorithm-state inspection of the stored storyboard. */

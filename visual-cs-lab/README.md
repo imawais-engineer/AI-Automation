@@ -252,6 +252,15 @@ profiles (`server/render/profiles.test.ts`), text fitting and anchor placement
 
 Environment variables: `PORT` (3000), `DATA_DIR` (SQLite), `MEDIA_DIR` (MP4 output).
 
+Voice-over narration is spoken from the lesson's voice-over script by a TTS
+provider. Deepgram is the wired-up provider; the key lives only in the server
+environment (`DEEPGRAM_API_KEY`, delivered as an app secret — never in a lesson
+row or the browser). `DEEPGRAM_BASE_URL` and `DEEPGRAM_TTS_MODEL` are optional and
+default to the public endpoint and `flux-naveen-en`. Without the key the Studio
+shows "provider not configured" and refuses to record instead of failing mid-mix.
+Each take is validated with ffmpeg and stored as an approved `narration` entry in
+the audio library, where the voice-over export mixes it under the silent master.
+
 ## Known gaps (deliberately not faked)
 
 - Only Stacks and Binary Search have a trusted animation configuration; Linear Search,

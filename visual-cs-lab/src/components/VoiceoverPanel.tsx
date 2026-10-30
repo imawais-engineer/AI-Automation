@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api, formatTimestamp, type VoiceoverStatus } from '../api';
+import NarrationPanel from './NarrationPanel';
 
 type Props = {
   lessonId: string;
@@ -202,6 +203,14 @@ export default function VoiceoverPanel({ lessonId, initial, onStatus }: Props) {
               value={script.script}
             />
             <span className="hint">Built from the scenes above — edit a line to change the narration.</span>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+            <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+              <strong style={{ fontSize: 13 }}>Narration audio</strong>
+              <span className="hint">Speaks this script, then mixes it under the silent master.</span>
+            </div>
+            <NarrationPanel lessonId={lessonId} />
           </div>
         </>
       )}
