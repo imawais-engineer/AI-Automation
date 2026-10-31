@@ -44,7 +44,7 @@ import {
   type Preset,
   type RenderJob
 } from './render/jobs.ts';
-import { cleanupPlan, KEEP_PER_LESSON, runCleanup } from './render/cleanup.ts';
+import { cleanupPlan, duplicatePlan, KEEP_PER_LESSON, runCleanup, runDedupe } from './render/cleanup.ts';
 
 import { attachUser, requireAction } from './auth.ts';
 import { adminApi } from './admin-api.ts';
@@ -916,6 +916,18 @@ app.get('/api/renders/cleanup', requireAction('render:run'), (_req, res) => {
 app.post('/api/renders/cleanup', requireAction('render:run'), async (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id: unknown) => String(id)) : undefined;
   const result = await runCleanup(ids);
+  res.status(result.failed.length > 0 ? 207 : 200).json({ result });
+});
+
+/** Older copies of the newest render per lesson and profile, so the Studio can confirm. */
+app.get('/api/renders/duplicates', requireAction('render:run'), (_req, res) => {
+  res.json({ plan: duplicatePlan() });
+});
+
+/** Deletes every duplicate render older than the newest copy of its lesson and profile. */
+app.post('/api/renders/duplicates', requireAction('render:run'), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id: unknown) => String(id)) : undefined;
+  const result = await runDedupe(ids);
   res.status(result.failed.length > 0 ? 207 : 200).json({ result });
 });
 

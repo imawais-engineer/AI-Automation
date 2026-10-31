@@ -100,14 +100,7 @@ function entry(row: JobRow): CleanupEntry {
  * can still play.
  */
 export function cleanupPlan(): CleanupPlan {
-  const rows = db
-    .prepare(
-      `SELECT render_jobs.id, render_jobs.lesson_id, render_jobs.preset, render_jobs.state,
-              render_jobs.output_path, render_jobs.created_at, lessons.title AS lesson_title
-       FROM render_jobs LEFT JOIN lessons ON lessons.id = render_jobs.lesson_id
-       ORDER BY render_jobs.created_at DESC, render_jobs.rowid DESC`
-    )
-    .all() as JobRow[];
+  const rows = allJobs();
 
   const inUse = filesInUse();
   const newest: Record<string, number> = {};
@@ -134,6 +127,15 @@ export function cleanupPlan(): CleanupPlan {
     }
   }
 
+  return planResult(KEEP_PER_LESSON, lessonOrder, keep, remove);
+}
+
+function planResult(
+  keepPerLesson: number,
+  lessonOrder: string[],
+  keep: CleanupEntry[],
+  remove: CleanupEntry[]
+): CleanupPlan {
   const lessons: CleanupLesson[] = lessonOrder.map((lessonId) => {
     const kept = keep.filter((item) => item.lesson_id === lessonId);
     const dropped = remove.filter((item) => item.lesson_id === lessonId);
@@ -146,7 +148,7 @@ export function cleanupPlan(): CleanupPlan {
   });
 
   return {
-    keepPerLesson: KEEP_PER_LESSON,
+    keepPerLesson,
     remove,
     keep,
     // Only lessons that actually lose a render are listed as affected.
@@ -154,6 +156,51 @@ export function cleanupPlan(): CleanupPlan {
     files: remove.filter((item) => item.file).length,
     bytes: remove.reduce((sum, item) => sum + item.bytes, 0)
   };
+}
+
+function allJobs(): JobRow[] {
+  return db
+    .prepare(
+      `SELECT render_jobs.id, render_jobs.lesson_id, render_jobs.preset, render_jobs.state,
+              render_jobs.output_path, render_jobs.created_at, lessons.title AS lesson_title
+       FROM render_jobs LEFT JOIN lessons ON lessons.id = render_jobs.lesson_id
+       ORDER BY render_jobs.created_at DESC, render_jobs.rowid DESC`
+    )
+    .all() as JobRow[];
+}
+
+/**
+ * One render per lesson and profile: the newest copy stays, and every older copy
+ * of the same profile is a duplicate. Anything still rendering or still played by
+ * a published lesson is kept regardless.
+ */
+export function duplicatePlan(): CleanupPlan {
+  const inUse = filesInUse();
+  const kept: Record<string, number> = {};
+  const lessonOrder: string[] = [];
+  const keep: CleanupEntry[] = [];
+  const remove: CleanupEntry[] = [];
+
+  for (const row of allJobs()) {
+    const key = `${row.lesson_id}:${row.preset}`;
+    if (!lessonOrder.includes(row.lesson_id)) lessonOrder.push(row.lesson_id);
+    const item = entry(row);
+    if (!kept[key]) {
+      kept[key] = 1;
+      item.reason = 'newest';
+      keep.push(item);
+    } else if (ACTIVE_STATES.includes(row.state)) {
+      item.reason = 'active';
+      keep.push(item);
+    } else if (row.output_path && inUse.has(row.output_path)) {
+      item.reason = 'in-use';
+      keep.push(item);
+    } else {
+      remove.push(item);
+    }
+  }
+
+  return planResult(1, lessonOrder, keep, remove);
 }
 
 export type CleanupResult = {
@@ -169,6 +216,15 @@ export type CleanupResult = {
  */
 export async function runCleanup(ids?: string[]): Promise<CleanupResult> {
   const plan = cleanupPlan();
+  return deleteEntries(plan, ids);
+}
+
+/** Deletes the planned duplicate renders and their MP4s. */
+export async function runDedupe(ids?: string[]): Promise<CleanupResult> {
+  return deleteEntries(duplicatePlan(), ids);
+}
+
+async function deleteEntries(plan: CleanupPlan, ids?: string[]): Promise<CleanupResult> {
   const wanted = ids && ids.length > 0 ? new Set(ids) : null;
   const targets = wanted ? plan.remove.filter((item) => wanted.has(item.id)) : plan.remove;
 

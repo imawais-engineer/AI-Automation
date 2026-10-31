@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { api, type RenderJob, type RenderValidation, type Pipeline } from '../api';
 import RenderQuality from '../components/RenderQuality';
 import RenderCleanup from '../components/RenderCleanup';
+import RenderDuplicates from '../components/RenderDuplicates';
 import PublishPanel from '../components/PublishPanel';
 
 const ACTIVE = ['queued', 'rendering', 'encoding', 'validating'];
@@ -81,6 +82,7 @@ export default function Renders() {
       {error && <div className="notice bad">{error}</div>}
 
       <RenderCleanup onCleaned={load} />
+      <RenderDuplicates onCleaned={load} />
 
       <div className="card">
         {jobs.length === 0 ? (
