@@ -16,10 +16,13 @@ import {
   buildBinaryPlan,
   buildLinkedPlan,
   buildStackPlan,
+  buildStructurePlan,
   type MotionPlan,
   type PlanBrand,
   type PlanCopy
 } from './plan.ts';
+import { framesForRun, structureChrome } from '../structure-run.ts';
+import { drawStructure } from './structure.ts';
 import { drawStack } from './stack.ts';
 import { drawBinary } from './binary.ts';
 import { drawArrays } from './arrays.ts';
@@ -31,6 +34,7 @@ export { stackStateAt } from './stack.ts';
 export { binaryStateAt } from './binary.ts';
 export { arrayStateAt } from './arrays.ts';
 export { linkedStateAt } from './linked.ts';
+export { structureStateAt } from './structure.ts';
 
 export type PlanBrandInput = PlanBrand;
 export type SceneLike = Scene;
@@ -154,6 +158,25 @@ export function planFor(args: {
     });
   }
 
+  if (run.kind === 'structure' && run.structure) {
+    if (!run.validation.ok) {
+      throw new Error(`The ${run.structure.kind} trace is not verified: ${run.validation.failures.join(' ')}`);
+    }
+    const chrome = structureChrome(run.structure);
+    return buildStructurePlan({
+      scenes,
+      label: chrome.label,
+      kickers: chrome.kickers,
+      steps: run.structure.trace.steps,
+      frames: framesForRun(run.structure),
+      facts: chrome.facts,
+      result: chrome.result,
+      holdCaption: chrome.holdCaption,
+      copy,
+      brand
+    });
+  }
+
   throw new Error('This concept has no animation configuration, so there is nothing to animate.');
 }
 
@@ -166,6 +189,7 @@ export function drawMoment(ctx: SKRSContext2D, plan: MotionPlan, tMs: number, di
   if (plan.kind === 'stack') drawStack(ctx, plan, tMs, dims);
   else if (plan.kind === 'binary') drawBinary(ctx, plan, tMs, dims);
   else if (plan.kind === 'array') drawArrays(ctx, plan, tMs, dims);
+  else if (plan.kind === 'structure') drawStructure(ctx, plan, tMs, dims);
   else drawLinked(ctx, plan, tMs, dims);
 }
 

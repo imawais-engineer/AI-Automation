@@ -4,6 +4,8 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 import { buildScenes, runConcept, type ConceptInput, type LessonInput } from './scenes.ts';
+import { DEFAULT_QUEUE_OPS } from './algorithms/queues.ts';
+import { DEFAULT_TREE_NODES } from './algorithms/trees.ts';
 import { ensureContentSchema } from './content-schema.ts';
 import { BRAND_DEFAULTS, brandingFrom, type Branding } from './branding.ts';
 
@@ -297,6 +299,44 @@ const BINARY_SEARCH_ANIMATION = {
   expect: { foundIndex: 3, steps: 2 }
 };
 
+/**
+ * Trusted animation configurations for the four structure shorts. Every one
+ * carries the result it is verified against: the queue's final order, the hash
+ * table's found bucket and probe count, the tree's visit order, and the BST's
+ * comparison count with its sorted in-order walk.
+ */
+const QUEUE_ANIMATION = {
+  kind: 'queue',
+  ops: DEFAULT_QUEUE_OPS,
+  expect: { finalQueue: [15, 16], front: 15, dequeueReturns: [4, 8] }
+};
+
+const HASH_ANIMATION = {
+  kind: 'hash-table',
+  size: 5,
+  ops: [
+    { op: 'put', key: 12 },
+    { op: 'put', key: 25 },
+    { op: 'put', key: 37 },
+    { op: 'put', key: 18 },
+    { op: 'get', key: 37 }
+  ],
+  expect: { found: 37, bucket: 2, probes: 2 }
+};
+
+const TREE_ANIMATION = {
+  kind: 'tree',
+  nodes: DEFAULT_TREE_NODES,
+  expect: { order: [8, 3, 10, 1, 6, 14], levels: 3 }
+};
+
+const BST_ANIMATION = {
+  kind: 'bst',
+  insert: [8, 3, 10, 1, 6, 14],
+  search: 10,
+  expect: { found: true, comparisons: 2, inorder: [1, 3, 6, 8, 10, 14] }
+};
+
 /** The lesson this configuration is demonstrated with. */
 const BINARY_SEARCH_LESSON = {
   title: 'Binary Search in 45 Seconds',
@@ -391,8 +431,9 @@ const SEED: SeedConcept[] = [
     pseudocode: 'ENQUEUE(q, x): q.tail = x\nDEQUEUE(q): return q.head',
     time: 'O(1) enqueue and dequeue',
     space: 'O(n)',
-    exampleInput: 'ENQUEUE(1), ENQUEUE(2), DEQUEUE()',
-    expectedOutput: '1 (queue now holds 2)',
+    exampleInput: 'ENQUEUE(4), ENQUEUE(8), ENQUEUE(15), FRONT, DEQUEUE, ENQUEUE(16), DEQUEUE',
+    expectedOutput: 'DEQUEUE returns 4 then 8; the queue ends [15, 16]',
+    animation: QUEUE_ANIMATION,
     related: ['stacks', 'breadth-first-search']
   },
   {
@@ -409,8 +450,9 @@ const SEED: SeedConcept[] = [
     pseudocode: 'PUT(k, v):\n  i = hash(k) % buckets\n  bucket[i].append((k, v))',
     time: 'O(1) expected, O(n) worst case',
     space: 'O(n)',
-    exampleInput: 'Put "ada" -> 36, get "ada"',
-    expectedOutput: '36',
+    exampleInput: 'PUT 12, 25, 37, 18 · GET 37',
+    expectedOutput: '37 hashes to bucket 2 and is found after two comparisons',
+    animation: HASH_ANIMATION,
     related: ['arrays', 'graphs']
   },
   {
@@ -423,11 +465,12 @@ const SEED: SeedConcept[] = [
     plain: 'A tree is a family tree: every node has one parent and any number of children.',
     technical:
       'A tree is a connected acyclic graph with a designated root. Height bounds recursion depth and traversal cost, which makes balance the central concern.',
-    pseudocode: 'DFS(node):\n  if node == null: return\n  visit(node)\n  for child in node.children: DFS(child)',
+    pseudocode: 'BFS(root):\n  queue = [root]\n  while queue:\n    node = queue.pop_front()\n    visit(node)\n    queue.push_back(node.children)',
     time: 'O(n) traversal',
-    space: 'O(h) recursion depth',
-    exampleInput: 'root(1) with children 2 and 3',
-    expectedOutput: '1, 2, 3 in pre-order',
+    space: 'O(h) frontier and depth',
+    exampleInput: 'root 8 with children 3 and 10, then 1, 6 and 14',
+    expectedOutput: '8, 3, 10, 1, 6, 14 — one level at a time',
+    animation: TREE_ANIMATION,
     related: ['binary-search-trees', 'graphs']
   },
   {
@@ -444,8 +487,9 @@ const SEED: SeedConcept[] = [
     pseudocode: 'SEARCH(node, k):\n  if node == null or node.key == k: return node\n  if k < node.key: return SEARCH(node.left, k)\n  return SEARCH(node.right, k)',
     time: 'O(log n) balanced, O(n) worst case',
     space: 'O(h)',
-    exampleInput: 'Insert 8, 3, 10, 1; search 10',
-    expectedOutput: 'Found 10 at depth 1',
+    exampleInput: 'Insert 8, 3, 10, 1, 6, 14; search 10',
+    expectedOutput: 'Found 10 at depth 1 after two comparisons',
+    animation: BST_ANIMATION,
     related: ['trees', 'binary-search']
   },
   {
@@ -948,6 +992,128 @@ function ensureMotionDemos(): void {
   }
 }
 
+/**
+ * Copy for the four structure shorts that ship with a fresh database: one
+ * sentence for the hook, and the takeaway the complexity panel has to leave the
+ * viewer with.
+ */
+const STRUCTURE_LESSONS: Record<string, Record<string, string>> = {
+  queues: {
+    title: 'Queues',
+    audience: 'Beginner software engineering students',
+    objective: 'Watch FIFO hold: values leave in the order they arrived.',
+    hook: 'First in line is the first one served.',
+    narration:
+      'Enqueue four, eight and fifteen. The front is four, because four arrived first. A dequeue returns four and moves the front on. A new value joins at the rear, behind everyone already waiting — so the next dequeue returns eight, not sixteen.',
+    on_screen_text: 'FIFO: first in, first out.',
+    key_takeaway: 'ENQUEUE adds at the rear, DEQUEUE removes from the front — both O(1).',
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: 'Cormen et al., Introduction to Algorithms (3rd ed.), §10.1; MDN Array.prototype.shift.'
+  },
+  'hash-tables': {
+    title: 'Hash Tables',
+    audience: 'Beginner software engineering students',
+    objective: 'See a hash land a key in its bucket, and a collision chain behind another key.',
+    hook: 'One calculation tells you exactly where the key lives.',
+    narration:
+      'Twelve mod five is two, so twelve goes in bucket two. Twenty-five lands in bucket zero. Thirty-seven also hashes to two, so it chains behind twelve. A lookup hashes the key, jumps to the bucket and compares only what is in that chain.',
+    on_screen_text: 'Hash the key, jump to the bucket, compare the chain.',
+    key_takeaway: 'A hash maps a key to a bucket; collisions chain, and a good hash keeps chains short.',
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: 'CLRS §11.2 (chaining); Sedgewick & Wayne, Algorithms (4th ed.), §3.4.'
+  },
+  trees: {
+    title: 'Trees',
+    audience: 'Beginner software engineering students',
+    objective: 'Read a tree as levels, then follow a breadth-first walk through it.',
+    hook: 'One root, many branches — and one sweep visits them all.',
+    narration:
+      'The root is eight. It has two children, three and ten, and each of those has its own. Breadth-first keeps a queue: visit the node at the front, push its children, repeat. That is why level zero finishes before level one.',
+    on_screen_text: 'A level is finished before the next one starts.',
+    key_takeaway: 'One root, one parent per node, no cycles — breadth-first visits every node once in O(n).',
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: 'CLRS §10.4 (representing rooted trees); Sedgewick & Wayne, Algorithms (4th ed.), §4.1.'
+  },
+  'binary-search-trees': {
+    title: 'Binary Search Trees',
+    audience: 'Beginner software engineering students',
+    objective: 'Insert keys by comparison and watch one search path find the target.',
+    hook: 'Smaller goes left. Bigger goes right. One path finds the key.',
+    narration:
+      'Insert eight at the root. Three is smaller, so it goes left; ten is bigger, so it goes right. Every key follows that same rule down one path. Searching ten compares it with eight, turns right, and finds it in two comparisons.',
+    on_screen_text: 'Left is smaller, right is bigger: the invariant picks the path.',
+    key_takeaway: 'Insert and search follow the ordering invariant; the cost is the height of the tree.',
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: 'CLRS §12.1–12.3; Sedgewick & Wayne, Algorithms (4th ed.), §3.2.'
+  }
+};
+
+/**
+ * Attaches the verified structure traces to databases created before these
+ * shorts existed, and rebuilds a storyboard that cannot describe them (the old
+ * 15 second draft has no branded opening and no trace beat). A storyboard a
+ * person has re-timed is left alone.
+ */
+function ensureStructureDemos(): void {
+  const branding = brandingFrom(readBrand());
+  const configs: Record<string, unknown> = {
+    queues: QUEUE_ANIMATION,
+    'hash-tables': HASH_ANIMATION,
+    trees: TREE_ANIMATION,
+    'binary-search-trees': BST_ANIMATION
+  };
+
+  for (const [slug, config] of Object.entries(configs)) {
+    const concept = db.prepare('SELECT id, animation_config FROM concepts WHERE slug = ?').get(slug) as
+      | { id: string; animation_config: string }
+      | undefined;
+    if (!concept) continue;
+
+    const current = safeParse(concept.animation_config);
+    const expected = (config as { kind?: string }).kind;
+    if (!current || current.kind !== expected) {
+      db.prepare('UPDATE concepts SET animation_config = ?, updated_at = ? WHERE id = ?').run(
+        JSON.stringify(config),
+        nowIso(),
+        concept.id
+      );
+    }
+
+    const copy = STRUCTURE_LESSONS[slug];
+    if (copy) ensureDemoLesson(concept.id, copy);
+
+    const conceptRow = db.prepare('SELECT * FROM concepts WHERE id = ?').get(concept.id) as ConceptInput | undefined;
+    const run = conceptRow ? runConcept(conceptRow) : null;
+    if (!conceptRow || !run?.supported) continue;
+
+    const lessons = db.prepare('SELECT * FROM lessons WHERE concept_id = ?').all(concept.id) as (LessonInput & {
+      scenes: string;
+    })[];
+
+    for (const lesson of lessons) {
+      const stored = safeParse(lesson.scenes);
+      const scenes = Array.isArray(stored) ? (stored as { type?: string; id?: string }[]) : [];
+      const duplicated = scenes.some((scene) => String(scene.id || '').includes('-copy-'));
+      if (duplicated) continue;
+
+      const traceBeats = scenes.filter((scene) => scene.type === 'trace').length;
+      const mismatched =
+        scenes.length === 0 || !scenes.some((scene) => scene.type === 'open') || traceBeats !== 1;
+      if (!mismatched) continue;
+
+      const seconds = Number(lesson.duration_seconds) < 30 ? DEMO_SECONDS : Number(lesson.duration_seconds);
+      const refreshed: LessonInput = { ...lesson, duration_seconds: seconds };
+      const built = buildScenes(refreshed, conceptRow, branding);
+      db.prepare('UPDATE lessons SET duration_seconds = ?, scenes = ?, updated_at = ? WHERE id = ?').run(
+        seconds,
+        JSON.stringify(built),
+        nowIso(),
+        lesson.id
+      );
+    }
+  }
+}
+
 function safeParse(raw: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(raw || '');
@@ -958,6 +1124,7 @@ function safeParse(raw: string): Record<string, unknown> | null {
 }
 
 ensureMotionDemos();
+ensureStructureDemos();
 
 // The learning-content model (lessons, slides, assets, progress, roles) is
 // additive and runs once; existing concepts, lessons and renders are migrated.

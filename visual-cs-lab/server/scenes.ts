@@ -29,6 +29,39 @@ import {
   type BinarySearchConfig,
   type BinarySearchStep
 } from './algorithms/binary-search.ts';
+import {
+  isQueueConfig,
+  parseQueueOps,
+  traceQueue,
+  validateQueueTrace,
+  type QueueConfig,
+  type QueueStep
+} from './algorithms/queues.ts';
+import {
+  isHashConfig,
+  parseHashOps,
+  parseHashSize,
+  traceHashTable,
+  validateHashTrace,
+  type HashConfig,
+  type HashStep
+} from './algorithms/hash-tables.ts';
+import {
+  isTreeConfig,
+  parseTreeNodes,
+  traceTree,
+  validateTreeTrace,
+  type TreeConfig,
+  type TreeStep
+} from './algorithms/trees.ts';
+import {
+  isBstConfig,
+  traceBst,
+  validateBstTrace,
+  type BstConfig,
+  type BstStep
+} from './algorithms/binary-search-trees.ts';
+import { structureChrome, type StructureRun } from './structure-run.ts';
 import { brandingFrom, openingCopy, type Branding } from './branding.ts';
 
 export type SceneType = 'open' | 'hook' | 'concept' | 'code' | 'execution' | 'trace' | 'complexity' | 'summary' | 'brand';
@@ -68,7 +101,14 @@ export type LinkedListVisual = {
   steps: LinkedListStep[];
 };
 
-export type SceneVisual = StackVisual | BinarySearchVisual | ArrayVisual | LinkedListVisual;
+export type StructureVisual = {
+  kind: 'structure';
+  /** Which structure the trace drives: queue, hash table, tree or BST. */
+  structureKind: StructureRun['kind'];
+  steps: (QueueStep | HashStep | TreeStep | BstStep)[];
+};
+
+export type SceneVisual = StackVisual | BinarySearchVisual | ArrayVisual | LinkedListVisual | StructureVisual;
 
 export type Scene = {
   id: string;
@@ -123,8 +163,10 @@ export type ConceptInput = {
 };
 
 export type ConceptRun = {
-  kind: 'stack' | 'binary-search' | 'array' | 'linked-list' | 'none';
+  kind: 'stack' | 'binary-search' | 'array' | 'linked-list' | 'structure' | 'none';
   supported: boolean;
+  /** The verified structure trace, when this concept animates one. */
+  structure: StructureRun | null;
   /** Stack events, empty for other kinds. */
   events: StackEvent[];
   /** Verified binary search steps, empty for other kinds. */
@@ -181,6 +223,7 @@ export function runConcept(concept: ConceptInput): ConceptRun {
     return {
       kind: 'array',
       supported: true,
+      structure: null,
       events: [],
       steps: [],
       linkedSteps: [],
@@ -205,6 +248,7 @@ export function runConcept(concept: ConceptInput): ConceptRun {
     return {
       kind: 'linked-list',
       supported: true,
+      structure: null,
       events: [],
       steps: [],
       linkedSteps: trace.steps,
@@ -229,6 +273,7 @@ export function runConcept(concept: ConceptInput): ConceptRun {
     return {
       kind: 'binary-search',
       supported: true,
+      structure: null,
       events: [],
       steps: trace.steps,
       linkedSteps: [],
@@ -246,12 +291,133 @@ export function runConcept(concept: ConceptInput): ConceptRun {
     };
   }
 
+  if (isQueueConfig(config)) {
+    const queueConfig = config as QueueConfig;
+    const trace = traceQueue(parseQueueOps(queueConfig.ops));
+    const validation = validateQueueTrace(trace, queueConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'queue', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `runs ${trace.steps.length} FIFO operations and leaves [${trace.final.join(', ')}]`,
+      input: [],
+      target: null,
+      comparisons: trace.steps.length,
+      complexity: {
+        time: 'O(1) enqueue and dequeue',
+        space: 'O(n)',
+        arraySize: trace.final.length,
+        comparisons: trace.steps.length
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isHashConfig(config)) {
+    const hashConfig = config as HashConfig;
+    const trace = traceHashTable({ size: parseHashSize(hashConfig.size), ops: parseHashOps(hashConfig.ops) });
+    const validation = validateHashTrace(trace, hashConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'hash-table', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `stores ${trace.keys.length} keys in ${trace.size} buckets with ${trace.collisions} collision${trace.collisions === 1 ? '' : 's'}`,
+      input: [],
+      target: null,
+      comparisons: trace.probes,
+      complexity: {
+        time: 'O(1) expected, O(n) worst case',
+        space: 'O(n)',
+        arraySize: trace.size,
+        comparisons: trace.probes
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isTreeConfig(config)) {
+    const treeConfig = config as TreeConfig;
+    const trace = traceTree(parseTreeNodes(treeConfig.nodes));
+    const validation = validateTreeTrace(trace, treeConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'tree', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `visits ${trace.steps.length} nodes level by level across ${trace.levels} levels`,
+      input: [],
+      target: null,
+      comparisons: trace.steps.length,
+      complexity: {
+        time: 'O(n) traversal',
+        space: 'O(h) frontier and depth',
+        arraySize: trace.steps.length,
+        comparisons: trace.steps.length
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isBstConfig(config)) {
+    const bstConfig = config as BstConfig;
+    const trace = traceBst({ insert: bstConfig.insert, search: bstConfig.search });
+    const validation = validateBstTrace(trace, bstConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'bst', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `inserts ${trace.nodes.length} keys and ${trace.found ? 'finds' : 'misses'} ${trace.search} in ${trace.comparisons} comparison${trace.comparisons === 1 ? '' : 's'}`,
+      input: [],
+      target: trace.search,
+      comparisons: trace.comparisons,
+      complexity: {
+        time: 'O(h) search and insert',
+        space: 'O(n)',
+        arraySize: trace.nodes.length,
+        comparisons: trace.comparisons
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
   const ops = config.ops ? parseOps(config.ops) : [];
   const supported = ops.length > 0;
   if (!supported) {
     return {
       kind: 'none',
       supported: false,
+      structure: null,
       events: [],
       steps: [],
       linkedSteps: [],
@@ -274,6 +440,7 @@ export function runConcept(concept: ConceptInput): ConceptRun {
   return {
     kind: 'stack',
     supported: true,
+    structure: null,
     events,
     steps: [],
     linkedSteps: [],
@@ -377,6 +544,8 @@ export function minimumDurationMs(branding: Branding, run: ConceptRun): number {
   // A traversal needs a readable setup, one beat per visited cell and a held result.
   if (run.kind === 'array') return bookends + 14000 + run.eventCount * 900;
   if (run.kind === 'linked-list') return bookends + 14000 + run.eventCount * 1100;
+  // A structure walk needs the same room: one readable beat per verified step.
+  if (run.kind === 'structure') return bookends + 14000 + run.eventCount * 900;
   const ops = Math.max(1, run.events.length);
   // 12.6 weight units of fixed explanation beats around 4.2 per operation.
   return bookends + Math.round(((ops * 4.2 + 12.6) / 4.2) * 950);
@@ -710,7 +879,143 @@ export function buildScenes(
   if (run.kind === 'linked-list' && run.supported) {
     return buildLinkedScenes(lesson, concept, run, totalMs, branding);
   }
+  if (run.kind === 'structure' && run.supported && run.structure) {
+    return buildStructureScenes(lesson, concept, run.structure, totalMs, branding);
+  }
   return buildStackScenes(lesson, concept, run, totalMs, branding);
+}
+
+/** What each structure short says about itself before and after the trace. */
+function structureLessonCopy(run: StructureRun): {
+  hook: string;
+  setupTitle: string;
+  setupCaption: string;
+  traceTitle: string;
+  traceSubtitle: string;
+  traceCaption: string;
+  complexityTitle: string;
+  complexityCaption: string;
+} {
+  if (run.kind === 'queue') {
+    const trace = run.trace;
+    const peak = trace.steps.reduce((max, step) => Math.max(max, step.items.length), 0);
+    return {
+      hook: 'First in line is the first one served.',
+      setupTitle: 'First in, first out',
+      setupCaption: 'ENQUEUE adds at the rear; DEQUEUE takes from the front — never the other way round.',
+      traceTitle: `Trace · ${trace.steps.length} operations in FIFO order`,
+      traceSubtitle: 'ENQUEUE at the rear · DEQUEUE at the front',
+      traceCaption: 'The value that leaves is always the one that arrived first.',
+      complexityTitle: 'Both ends are O(1)',
+      complexityCaption: `Enqueue and dequeue each touch one end — O(1). Space: O(${peak}) for the queue.`
+    };
+  }
+
+  if (run.kind === 'hash-table') {
+    const trace = run.trace;
+    const last = trace.steps[trace.steps.length - 1];
+    return {
+      hook: 'One calculation tells you exactly where the key lives.',
+      setupTitle: 'One calculation, one bucket',
+      setupCaption: `h(key) = key mod ${trace.size} turns any key into a bucket number — no searching for the shelf.`,
+      traceTitle: `Trace · PUT ${trace.keys.join(', ')} · GET ${last?.key ?? 0}`,
+      traceSubtitle: `h(key) = key mod ${trace.size} · collisions chain behind`,
+      traceCaption: 'The hash picks the bucket; only a collision chain has to be walked.',
+      complexityTitle: 'Expected O(1), worst case O(n)',
+      complexityCaption: `${trace.probes} probes this run. A good hash keeps chains short; a bad one makes the table a list. Space: O(n).`
+    };
+  }
+
+  if (run.kind === 'tree') {
+    const trace = run.trace;
+    const root = trace.order[0] ?? 0;
+    return {
+      hook: 'One root, many branches — and one sweep visits them all.',
+      setupTitle: 'One parent per node',
+      setupCaption: `Root ${root} has children, and each of those has its own. No node loops back — that is what makes it a tree.`,
+      traceTitle: `Trace · breadth-first from the root ${root}`,
+      traceSubtitle: 'visit · enqueue children · take the next from the front',
+      traceCaption: 'The frontier is a queue: a whole level is finished before the next one starts.',
+      complexityTitle: 'Every node exactly once',
+      complexityCaption: `${trace.steps.length} nodes visited once each — O(n). Frontier memory is O(width of the widest level).`
+    };
+  }
+
+  const trace = run.trace;
+  return {
+    hook: 'Smaller goes left. Bigger goes right. One path finds the key.',
+    setupTitle: 'Left is smaller, right is bigger',
+    setupCaption: 'The ordering invariant is the whole data structure: it tells the search which way to go.',
+    traceTitle: `Trace · insert ${trace.insert.join(', ')} · search ${trace.search}`,
+    traceSubtitle: 'compare · turn left or right · repeat',
+    traceCaption: 'Each comparison throws one whole side of the tree away.',
+    complexityTitle: 'Cost is the height',
+    complexityCaption: `${trace.comparisons} comparison${trace.comparisons === 1 ? '' : 's'} for ${trace.search}. Balanced height is log n; a sorted insert order degenerates to n.`
+  };
+}
+
+/**
+ * The structure lessons: hook, what the container is, one beat per verified step
+ * and the cost panel. Queue, hash table, tree and BST share the beats; the copy
+ * and the frames are the only differences.
+ */
+function buildStructureScenes(
+  lesson: LessonInput,
+  concept: ConceptInput,
+  run: StructureRun,
+  totalMs: number,
+  branding: Branding
+): Scene[] {
+  const copy = structureLessonCopy(run);
+  const chrome = structureChrome(run);
+  const setup: StructureVisual = { kind: 'structure', structureKind: run.kind, steps: [] };
+
+  const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
+    {
+      weight: 2.5,
+      scene: {
+        type: 'hook',
+        title: lesson.hook || copy.hook,
+        subtitle: lesson.objective || concept.summary,
+        caption: lesson.on_screen_text || ''
+      }
+    },
+    {
+      weight: 5,
+      scene: {
+        type: 'concept',
+        title: copy.setupTitle,
+        subtitle: concept.plain_explanation || concept.summary,
+        caption: copy.setupCaption,
+        visual: setup
+      }
+    },
+    {
+      weight: 26,
+      scene: {
+        type: 'trace',
+        title: copy.traceTitle,
+        subtitle: copy.traceSubtitle,
+        caption: copy.traceCaption,
+        visual: { ...setup, steps: run.trace.steps }
+      }
+    },
+    {
+      weight: 7,
+      scene: {
+        type: 'complexity',
+        title: lesson.key_takeaway || copy.complexityTitle,
+        subtitle: concept.complexity_time,
+        caption: copy.complexityCaption,
+        facts: chrome.facts
+      }
+    }
+  ];
+
+  return withBookends(specs, totalMs, branding, {
+    opening: openingScene(branding, lesson, concept),
+    ending: closingScene(branding)
+  });
 }
 
 function hasExpectation(config: Record<string, unknown>): boolean {
@@ -788,7 +1093,10 @@ function storyboardIssues(
     );
   }
   const traceScenes = stored.filter((scene) => scene.type === 'trace');
-  if ((run.kind === 'binary-search' || run.kind === 'array' || run.kind === 'linked-list') && traceScenes.length !== 1) {
+  if (
+    (run.kind === 'binary-search' || run.kind === 'array' || run.kind === 'linked-list' || run.kind === 'structure') &&
+    traceScenes.length !== 1
+  ) {
     issues.push(
       `The storyboard needs exactly one trace beat but has ${traceScenes.length} — rebuild the storyboard.`
     );
@@ -868,6 +1176,23 @@ function storyboardIssues(
             issues.push(`${label} reports ${String(scene.visual.foundIndex)} as the match but the trace found ${String(run.foundIndex)} — rebuild the storyboard.`);
           }
         }
+      } else if (scene.visual.kind === 'structure' && run.kind === 'structure' && run.structure) {
+        if (scene.visual.structureKind !== run.structure.kind) {
+          issues.push(`${label} animates a ${scene.visual.structureKind} where the concept defines a ${run.structure.kind} — rebuild the storyboard.`);
+        }
+        if (scene.visual.steps.length > 0) {
+          if (scene.visual.steps.length !== run.eventCount) {
+            issues.push(
+              `${label} carries ${scene.visual.steps.length} steps but the trusted run has ${run.eventCount} — rebuild the storyboard.`
+            );
+          } else {
+            const shown = scene.visual.steps.map((step) => step.hudLabel).join('|');
+            const verified = run.structure.trace.steps.map((step) => step.hudLabel).join('|');
+            if (shown !== verified) {
+              issues.push(`${label} animates different steps than the verified trace — rebuild the storyboard.`);
+            }
+          }
+        }
       } else if (scene.visual.kind === 'stack' && run.kind === 'stack') {
         if (!Array.isArray(scene.visual.items)) issues.push(`${label} is missing its stack snapshot.`);
       }
@@ -889,6 +1214,15 @@ function storyboardIssues(
 
   return issues;
 }
+
+const KIND_LABEL: Record<ConceptRun['kind'], string> = {
+  stack: 'stack',
+  'binary-search': 'binary search',
+  array: 'array traversal',
+  'linked-list': 'linked list',
+  structure: 'structure',
+  none: 'untraced'
+};
 
 /** Everything that has to be true before a lesson may be rendered. */
 export function lessonIssues(
@@ -927,7 +1261,7 @@ export function lessonIssues(
   }
   if (!hasExpectation(config)) {
     issues.push(
-      `The ${run.kind === 'binary-search' ? 'binary search' : 'stack'} animation configuration has no expected result to verify against.`
+      `The ${KIND_LABEL[run.kind]} animation configuration has no expected result to verify against.`
     );
   }
 

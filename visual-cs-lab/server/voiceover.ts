@@ -141,6 +141,9 @@ function stackNarration(event: StackEvent): string {
 }
 
 function complexityNarration(plan: MotionPlan): string {
+  if (plan.kind === 'structure') {
+    return `The cost is ${plan.copy.time || 'O(1)'}, and the space is ${plan.copy.space || 'O(n)'}.`;
+  }
   const time = plan.copy.time || (plan.kind === 'binary' ? 'O(log n)' : 'O(1)');
   if (time.includes('O(1)')) {
     return `Push, pop and peek cost the same at any size, because only the top is touched. The stack needs space for however many values it holds.`;
@@ -191,11 +194,15 @@ export function generateVoiceover(args: {
   const setupLine =
     plan.kind === 'stack'
       ? 'Only the top is reachable. Every push and pop works there.'
-      : 'The only precondition is a sorted array. The bounds keep narrowing.';
+      : plan.kind === 'structure'
+        ? plan.copy.objective || plan.copy.hook
+        : 'The only precondition is a sorted array. The bounds keep narrowing.';
   const signoff =
     plan.kind === 'stack'
       ? 'That is LIFO: newest in, first out.'
-      : 'That is halving: each comparison drops half.';
+      : plan.kind === 'structure'
+        ? plan.holdCaption
+        : 'That is halving: each comparison drops half.';
 
   for (const beat of plan.beats) {
     if (beat.sceneType === 'open') {
@@ -251,6 +258,25 @@ export function generateVoiceover(args: {
       }
       continue;
     }
+    if (beat.sceneType === 'trace' && plan.kind === 'structure') {
+      const steps = plan.steps;
+      const intro = plan.traceIntro;
+      if (intro && intro.endMs > intro.startMs && steps.length > 0) {
+        add(
+          'Trace · setup',
+          intro.startMs,
+          Math.min(intro.endMs, steps[0].startMs),
+          plan.copy.objective || plan.copy.hook
+        );
+      }
+      for (const window of steps) {
+        add(`Trace · step ${window.index + 1}`, window.startMs, window.endMs, window.step.message);
+      }
+      if (plan.hold && plan.hold.endMs > plan.hold.startMs) {
+        add('Trace · result', plan.hold.startMs, Math.min(plan.hold.endMs, beat.endMs), plan.holdCaption);
+      }
+      continue;
+    }
     if (beat.sceneType === 'summary') {
       const lastOp = plan.kind === 'stack' ? plan.ops[plan.ops.length - 1] : null;
       const items = lastOp ? lastOp.event.items : [];
@@ -303,7 +329,9 @@ export function voiceoverSourceHash(plan: MotionPlan, lesson: LessonInput, conce
           ? { array: plan.array, target: plan.target, steps: plan.steps.map((window) => window.step) }
           : plan.kind === 'array'
             ? { array: plan.array, total: plan.total, steps: plan.steps.map((window) => window.step) }
-            : { values: plan.values, target: plan.target, foundIndex: plan.foundIndex, steps: plan.steps.map((window) => window.step) },
+            : plan.kind === 'structure'
+              ? { label: plan.label, steps: plan.steps.map((window) => window.step) }
+              : { values: plan.values, target: plan.target, foundIndex: plan.foundIndex, steps: plan.steps.map((window) => window.step) },
     concept: {
       time: concept.complexity_time,
       space: concept.complexity_space,
@@ -346,6 +374,12 @@ export function verifiedNumbers(plan: MotionPlan): Set<number> {
     if (plan.foundIndex !== null) allowed.add(plan.foundIndex);
     for (const window of plan.steps) {
       [window.step.n, window.step.nodeIndex, window.step.value].forEach((value) => allowed.add(value));
+    }
+  } else if (plan.kind === 'structure') {
+    allowed.add(plan.steps.length);
+    for (const window of plan.steps) {
+      allowed.add(window.step.n);
+      numbersIn(JSON.stringify(window.step)).forEach((value) => allowed.add(value));
     }
   } else {
     plan.array.forEach((value) => allowed.add(value));

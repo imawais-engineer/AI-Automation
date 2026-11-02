@@ -12,6 +12,7 @@ import type { BinarySearchStep } from '../algorithms/binary-search.ts';
 import type { StackEvent } from '../algorithms/stack.ts';
 import type { ArrayStep } from '../algorithms/arrays.ts';
 import type { LinkedListStep } from '../algorithms/linked-lists.ts';
+import type { StructureFrame, StructureStepCopy } from './structure-types.ts';
 
 export type BeatKey = 'open' | 'intro' | 'setup' | 'op' | 'trace' | 'lifo' | 'complexity' | 'brand';
 
@@ -167,7 +168,42 @@ export type LinkedPlan = {
   hold: { startMs: number; endMs: number } | null;
 };
 
-export type MotionPlan = StackPlan | BinaryPlan | ArrayPlan | LinkedPlan;
+export type StructureStepWindow = {
+  step: StructureStepCopy;
+  index: number;
+  startMs: number;
+  endMs: number;
+  /** The picture for this step, laid out from the verified trace. */
+  frame: StructureFrame;
+};
+
+/**
+ * A structure short — queue, hash table, tree or BST — animates one verified
+ * step at a time. Every kind shares the timeline; only the frames differ, which
+ * is why one plan covers them all.
+ */
+export type StructurePlan = {
+  kind: 'structure';
+  durationMs: number;
+  brand: PlanBrand;
+  copy: PlanCopy;
+  opening: PlanOpening;
+  beats: Beat[];
+  /** Header label: QUEUE, HASH TABLE, TREE, BST. */
+  label: string;
+  /** Two short kickers under the header. */
+  kickers: [string, string];
+  steps: StructureStepWindow[];
+  traceIntro: { startMs: number; endMs: number } | null;
+  hold: { startMs: number; endMs: number } | null;
+  /** The complexity panel's rows. */
+  facts: { label: string; value: string }[];
+  /** The result held on screen once the trace finishes. */
+  result: { title: string; sub: string };
+  holdCaption: string;
+};
+
+export type MotionPlan = StackPlan | BinaryPlan | ArrayPlan | LinkedPlan | StructurePlan;
 
 export type PlanScene = {
   type: string;
@@ -504,5 +540,45 @@ export function buildLinkedPlan(args: {
     steps: visitWindows,
     traceIntro: intro,
     hold
+  };
+}
+
+/**
+ * The structure plan: one window per verified step, each carrying the frame the
+ * layout produced for that step, plus the copy the panel and result toast need.
+ */
+export function buildStructurePlan(args: {
+  scenes: PlanScene[];
+  label: string;
+  kickers: [string, string];
+  steps: StructureStepCopy[];
+  frames: StructureFrame[];
+  facts: { label: string; value: string }[];
+  result: { title: string; sub: string };
+  holdCaption: string;
+  copy: PlanCopy;
+  brand: PlanBrand;
+}): StructurePlan {
+  const { scenes, label, kickers, steps, frames, facts, result, holdCaption, copy, brand } = args;
+  if (steps.length !== frames.length) {
+    throw new Error(`The ${label} plan has ${steps.length} steps but ${frames.length} frames — rebuild the storyboard.`);
+  }
+  const { beats, traceStartMs, traceEndMs } = traversalBeats(scenes);
+  const { windows, intro, hold } = traversalWindows(steps, traceStartMs, traceEndMs);
+  return {
+    kind: 'structure',
+    durationMs: beats[beats.length - 1].endMs,
+    brand,
+    copy,
+    opening: openingOf(scenes, brand),
+    beats,
+    label,
+    kickers,
+    steps: windows.map((window) => ({ ...window, frame: frames[window.index] })),
+    traceIntro: intro,
+    hold,
+    facts,
+    result,
+    holdCaption
   };
 }
