@@ -36,7 +36,7 @@ administrator exists: on a fresh install `/sign-in` offers a **create the first
 administrator** form, and that account receives the `admin` role. Later sign-ups at
 `/sign-up` are learners; an administrator changes a role with
 `PATCH /api/admin/users/:id`. The Studio then lives at `/admin/content` (roadmap and
-lesson editing) and `/admin/renders` (render jobs, quality reports, publish copy).
+lesson editing) and `/admin/renders` (render jobs, quality reports, video captions).
 
 The app writes to two directories. Their defaults are under `/tmp`, which a reboot can
 clear, so point them somewhere permanent to keep content and videos:

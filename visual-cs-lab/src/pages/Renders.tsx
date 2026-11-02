@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 
 import { api, type RenderJob, type RenderValidation, type Pipeline } from '../api';
 import RenderQuality from '../components/RenderQuality';
-import PublishPanel from '../components/PublishPanel';
+import Collapsible from '../components/Collapsible';
 import VideoCaptions from '../components/VideoCaptions';
 
 const ACTIVE = ['queued', 'rendering', 'encoding', 'validating'];
@@ -44,7 +44,6 @@ export default function Renders() {
   const [jobs, setJobs] = useState<RenderJob[]>([]);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState<string | null>(null);
   const [tab, setTab] = useState<'overview' | 'captions'>('overview');
 
   const load = useCallback(async () => {
@@ -208,16 +207,6 @@ export default function Renders() {
                 {createdParts(focused.created_at).date} · {createdParts(focused.created_at).time}
               </span>
             </div>
-            <div className="row">
-              {focused.state === 'done' && (
-                <button
-                  className={`btn ${publishing === focused.id ? 'primary' : ''}`}
-                  onClick={() => setPublishing(publishing === focused.id ? null : focused.id)}
-                >
-                  {publishing === focused.id ? 'Close publish' : 'Publish copy'}
-                </button>
-              )}
-            </div>
           </div>
           <div className="chips" style={{ marginTop: 4 }}>
             <button className={`chip ${tab === 'overview' ? 'on' : ''}`} onClick={() => setTab('overview')}>
@@ -231,10 +220,11 @@ export default function Renders() {
           {tab === 'captions' && <VideoCaptions key={focused.id} renderId={focused.id} />}
           {tab === 'overview' && (
           <div className="grid two">
-            <RenderQuality job={focused} />
+            <RenderQuality job={focused} checksCollapsed />
             <div>
-              <h3>Worker log</h3>
-              <div className="log">{focused.log || 'No log lines recorded yet.'}</div>
+              <Collapsible title="Worker log" summary={focused.log ? `${focused.log.split('\n').length} lines` : 'empty'}>
+                <div className="log">{focused.log || 'No log lines recorded yet.'}</div>
+              </Collapsible>
               <h3 style={{ marginTop: 18 }}>Metadata</h3>
               <div>
                 {[
@@ -267,9 +257,6 @@ export default function Renders() {
               </div>
             </div>
           </div>
-          )}
-          {tab === 'overview' && publishing === focused.id && (
-            <PublishPanel key={focused.id} lessonId={focused.lesson_id} renderId={focused.id} />
           )}
         </div>
       )}

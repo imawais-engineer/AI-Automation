@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 
 import { formatBytes, type RenderJob, type RenderValidation } from '../api';
+import Collapsible from './Collapsible';
 
 function parseValidation(raw: string | null): RenderValidation | null {
   if (!raw) return null;
@@ -16,10 +17,41 @@ function parseValidation(raw: string | null): RenderValidation | null {
  * What the encoded file actually is: playable preview, download, stream metadata
  * and the real checks the worker ran on the output.
  */
-export default function RenderQuality({ job }: { job: RenderJob }) {
+export default function RenderQuality({
+  job,
+  checksCollapsed = false
+}: {
+  job: RenderJob;
+  /** Fold the check list away behind a header, for pages that show many jobs. */
+  checksCollapsed?: boolean;
+}) {
   const validation = useMemo(() => parseValidation(job.validation), [job.validation]);
   const media = validation?.media;
   const failed = validation?.checks.filter((check) => !check.ok) || [];
+
+  const checks = validation && (
+    <>
+      <div className={`notice ${validation.ok ? 'good' : 'bad'}`} style={{ margin: 0 }}>
+        {validation.ok
+          ? `Quality checked: ${validation.checks.length} automated checks passed.`
+          : `Quality checks failed: ${failed.map((check) => check.label).join(', ')}`}
+      </div>
+      <ul className="check-list">
+        {validation.checks.map((check) => (
+          <li key={check.id} className={check.ok ? 'ok' : 'bad'}>
+            <span className="mark">{check.ok ? '✓' : '✕'}</span>
+            <span>
+              <strong>{check.label}</strong>
+              <em>{check.detail}</em>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="hint" style={{ marginBottom: 0 }}>
+        Human review still required: {validation.humanReview[0].toLowerCase()}
+      </p>
+    </>
+  );
 
   return (
     <div className="render-quality">
@@ -46,29 +78,17 @@ export default function RenderQuality({ job }: { job: RenderJob }) {
         </>
       )}
 
-      {validation && (
-        <>
-          <div className={`notice ${validation.ok ? 'good' : 'bad'}`} style={{ margin: 0 }}>
-            {validation.ok
-              ? `Quality checked: ${validation.checks.length} automated checks passed.`
-              : `Quality checks failed: ${failed.map((check) => check.label).join(', ')}`}
-          </div>
-          <ul className="check-list">
-            {validation.checks.map((check) => (
-              <li key={check.id} className={check.ok ? 'ok' : 'bad'}>
-                <span className="mark">{check.ok ? '✓' : '✕'}</span>
-                <span>
-                  <strong>{check.label}</strong>
-                  <em>{check.detail}</em>
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="hint" style={{ marginBottom: 0 }}>
-            Human review still required: {validation.humanReview[0].toLowerCase()}
-          </p>
-        </>
-      )}
+      {validation &&
+        (checksCollapsed ? (
+          <Collapsible
+            title="Quality checks"
+            summary={validation.ok ? `${validation.checks.length} passed` : `${failed.length} failed`}
+          >
+            {checks}
+          </Collapsible>
+        ) : (
+          checks
+        ))}
 
       {!validation && job.state !== 'done' && job.error && (
         <p style={{ color: 'var(--bad)', fontSize: 12.5, margin: 0 }}>{job.error}</p>
