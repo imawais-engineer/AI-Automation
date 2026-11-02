@@ -135,14 +135,6 @@ export default function LessonRoadmap({ rows }: { rows: RoadmapRow[] }) {
                       </span>
                     </div>
                   </div>
-                  <div className="row" style={{ gap: 6 }}>
-                    <Link className="btn ghost" to={`/admin/content/${row.id}`} style={{ padding: '4px 9px', fontSize: 11 }}>
-                      Edit
-                    </Link>
-                    <Link className="btn ghost" to={`/admin/lessons/${row.id}`} style={{ padding: '4px 9px', fontSize: 11 }}>
-                      Storyboard
-                    </Link>
-                  </div>
                 </li>
               ))}
             </ol>
