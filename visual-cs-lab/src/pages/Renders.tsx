@@ -121,7 +121,6 @@ export default function Renders() {
               <tr>
                 <th>Lesson</th>
                 <th>Created</th>
-                <th>Profile</th>
                 <th>State</th>
                 <th>Quality</th>
                 <th>Progress</th>
@@ -140,12 +139,6 @@ export default function Renders() {
                       <div style={{ fontSize: 12 }}>{created.date}</div>
                       <div className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
                         {created.time}
-                      </div>
-                    </td>
-                    <td className="mono" style={{ fontSize: 12 }}>
-                      {job.preset}
-                      <div style={{ color: 'var(--muted)' }}>
-                        {job.width}×{job.height} · {job.fps}fps
                       </div>
                     </td>
                     <td>
@@ -185,17 +178,9 @@ export default function Renders() {
                           {job.id === selected ? 'Hide' : 'Inspect'}
                         </button>
                         {job.state === 'done' && (
-                          <>
-                            <a className="btn ghost" href={`/api/renders/${job.id}/video`}>
-                              Download
-                            </a>
-                            <button
-                              className={`btn ${job.id === publishing ? 'primary' : ''}`}
-                              onClick={() => setPublishing(job.id === publishing ? null : job.id)}
-                            >
-                              {job.id === publishing ? 'Close publish' : 'Publish'}
-                            </button>
-                          </>
+                          <a className="btn ghost" href={`/api/renders/${job.id}/video`}>
+                            Download
+                          </a>
                         )}
                         {(job.state === 'error' || job.state === 'cancelled') && (
                           <button className="btn" onClick={() => act(job.id, 'retry')}>
@@ -217,20 +202,25 @@ export default function Renders() {
         )}
       </div>
 
-      {publishing && (() => {
-        const job = jobs.find((item) => item.id === publishing);
-        if (!job || job.state !== 'done') return null;
-        return <PublishPanel key={job.id} lessonId={job.lesson_id} renderId={job.id} />;
-      })()}
-
       {focused && (
         <div className="card">
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <h2>Job {focused.id.slice(0, 8)}</h2>
-            <span className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
-              {focused.frames} / {focused.expected_frames || '—'} frames · {focused.fps} fps · snapshot{' '}
-              {(focused.storyboard_hash || '').slice(0, 8) || '—'}
-            </span>
+            <div className="row">
+              <span className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+                {focused.preset} · {focused.width}×{focused.height} · {focused.frames} /{' '}
+                {focused.expected_frames || '—'} frames · {focused.fps} fps · snapshot{' '}
+                {(focused.storyboard_hash || '').slice(0, 8) || '—'}
+              </span>
+              {focused.state === 'done' && (
+                <button
+                  className={`btn ${publishing === focused.id ? 'primary' : ''}`}
+                  onClick={() => setPublishing(publishing === focused.id ? null : focused.id)}
+                >
+                  {publishing === focused.id ? 'Close publish' : 'Publish copy'}
+                </button>
+              )}
+            </div>
           </div>
           {focused.error && <div className="notice bad">{focused.error}</div>}
           <div className="grid two">
@@ -240,6 +230,9 @@ export default function Renders() {
               <div className="log">{focused.log || 'No log lines recorded yet.'}</div>
             </div>
           </div>
+          {publishing === focused.id && (
+            <PublishPanel key={focused.id} lessonId={focused.lesson_id} renderId={focused.id} />
+          )}
         </div>
       )}
     </>
