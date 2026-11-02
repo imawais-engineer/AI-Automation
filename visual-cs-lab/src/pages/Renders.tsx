@@ -202,7 +202,12 @@ export default function Renders() {
       {focused && (
         <div className="card">
           <div className="row" style={{ justifyContent: 'space-between' }}>
-            <h2>Job {focused.id.slice(0, 8)}</h2>
+            <div>
+              <h2>{focused.lesson_title || focused.lesson_id}</h2>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
+                {createdParts(focused.created_at).date} · {createdParts(focused.created_at).time}
+              </span>
+            </div>
             <div className="row">
               {focused.state === 'done' && (
                 <button
