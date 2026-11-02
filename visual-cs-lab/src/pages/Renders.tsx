@@ -207,11 +207,6 @@ export default function Renders() {
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <h2>Job {focused.id.slice(0, 8)}</h2>
             <div className="row">
-              <span className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
-                {focused.preset} · {focused.width}×{focused.height} · {focused.frames} /{' '}
-                {focused.expected_frames || '—'} frames · {focused.fps} fps · snapshot{' '}
-                {(focused.storyboard_hash || '').slice(0, 8) || '—'}
-              </span>
               {focused.state === 'done' && (
                 <button
                   className={`btn ${publishing === focused.id ? 'primary' : ''}`}
@@ -228,6 +223,36 @@ export default function Renders() {
             <div>
               <h3>Worker log</h3>
               <div className="log">{focused.log || 'No log lines recorded yet.'}</div>
+              <h3 style={{ marginTop: 18 }}>Metadata</h3>
+              <div>
+                {[
+                  ['Profile', focused.preset],
+                  ['Resolution', `${focused.width}×${focused.height}`],
+                  ['Frame rate', `${focused.fps} fps`],
+                  ['Frames', `${focused.frames} / ${focused.expected_frames || '—'}`],
+                  ['Duration', focused.duration_seconds ? `${focused.duration_seconds.toFixed(2)}s` : '—'],
+                  ['Created', `${createdParts(focused.created_at).date} · ${createdParts(focused.created_at).time}`],
+                  ['Snapshot', (focused.storyboard_hash || '').slice(0, 8) || '—']
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      padding: '5px 0',
+                      borderBottom: '1px solid var(--line)'
+                    }}
+                  >
+                    <span className="mono" style={{ fontSize: 10.5, letterSpacing: '0.06em', color: 'var(--muted)' }}>
+                      {label.toUpperCase()}
+                    </span>
+                    <span className="mono" style={{ fontSize: 12 }}>
+                      {value}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
           {publishing === focused.id && (
