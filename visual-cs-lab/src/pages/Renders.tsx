@@ -9,6 +9,28 @@ import PublishPanel from '../components/PublishPanel';
 
 const ACTIVE = ['queued', 'rendering', 'encoding', 'validating'];
 
+const PKT_DATE = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Karachi',
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+});
+
+const PKT_TIME = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Karachi',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: true,
+});
+
+/** Job timestamps are stored in UTC; the Studio shows them in Pakistan time (UTC+5). */
+function createdParts(iso: string): { date: string; time: string } {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return { date: '—', time: '—' };
+  const time = PKT_TIME.format(at).replace(/\s?(am|pm)$/i, (m) => ` ${m.trim().toUpperCase()}`);
+  return { date: PKT_DATE.format(at), time: `${time} PKT` };
+}
+
 function qualityOf(job: RenderJob): RenderValidation | null {
   if (!job.validation) return null;
   try {
@@ -98,6 +120,7 @@ export default function Renders() {
             <thead>
               <tr>
                 <th>Lesson</th>
+                <th>Created</th>
                 <th>Profile</th>
                 <th>State</th>
                 <th>Quality</th>
@@ -109,9 +132,16 @@ export default function Renders() {
             <tbody>
               {jobs.map((job) => {
                 const quality = qualityOf(job);
+                const created = createdParts(job.created_at);
                 return (
                   <tr key={job.id}>
                     <td>{job.lesson_title || job.lesson_id}</td>
+                    <td>
+                      <div style={{ fontSize: 12 }}>{created.date}</div>
+                      <div className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
+                        {created.time}
+                      </div>
+                    </td>
                     <td className="mono" style={{ fontSize: 12 }}>
                       {job.preset}
                       <div style={{ color: 'var(--muted)' }}>
