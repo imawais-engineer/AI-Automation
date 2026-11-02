@@ -1,3 +1,7 @@
+// First import on purpose: it reads a local .env before any module below asks
+// process.env for a port, data directory or media directory.
+import './env.ts';
+
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';

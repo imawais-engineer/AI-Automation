@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "description": "Visual CS Lab — code-driven educational short generator (concept -> verified trace -> scenes -> branded MP4).",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "dev": "tsx server/index.ts",
     "start": "tsx server/index.ts",

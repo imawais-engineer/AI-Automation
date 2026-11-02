@@ -17,6 +17,78 @@ Two shorts ship complete end to end, both silent 45 second verticals:
 - **Binary Search** — `[1, 3, 5, 7, 9]` and target `7`, with LOW/HIGH/MID, the active
   range and the discarded half driven by the verified trace.
 
+## Quick start
+
+**Prerequisites:** Node.js 20.19+ (22 LTS recommended) and npm. Nothing else: ffmpeg is
+installed as a package (`ffmpeg-static`), the video fonts are committed in
+`public/fonts/`, and storage is SQLite — no database server and no headless Chromium.
+
+```bash
+git clone https://github.com/imawais-engineer/AI-Automation.git
+cd AI-Automation/visual-cs-lab
+npm ci                    # install exactly the locked dependency tree
+cp .env.example .env      # optional — only voice-over needs a key
+npm run dev               # API, UI and video downloads on http://localhost:3000
+```
+
+Open <http://localhost:3000> for the public learning site. The Studio is empty until an
+administrator exists: on a fresh install `/sign-in` offers a **create the first
+administrator** form, and that account receives the `admin` role. Later sign-ups at
+`/sign-up` are learners; an administrator changes a role with
+`PATCH /api/admin/users/:id`. The Studio then lives at `/admin/content` (roadmap and
+lesson editing) and `/admin/renders` (render jobs, quality reports, publish copy).
+
+The app writes to two directories. Their defaults are under `/tmp`, which a reboot can
+clear, so point them somewhere permanent to keep content and videos:
+
+```bash
+DATA_DIR=~/.visual-cs-lab MEDIA_DIR=~/.visual-cs-lab/media npm run dev
+```
+
+## Environment variables
+
+Every variable is optional — the app boots, renders and passes its tests with none of
+them. Copy `.env.example` to `.env` (loaded at boot; real environment variables win) or
+set them in the host's environment.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP port for the API, the UI and video downloads |
+| `DATA_DIR` | `/tmp/visual-cs-lab` | Where `lab.db` (SQLite) is created |
+| `MEDIA_DIR` | `/tmp/visual-cs-lab/media` | Rendered MP4s, scene clips and thumbnails |
+| `DEEPGRAM_API_KEY` | — | Voice-over narration; unset means the Studio reports "provider not configured" instead of failing mid-mix |
+| `DEEPGRAM_BASE_URL` | `https://api.deepgram.com` | Optional Deepgram-compatible endpoint |
+| `DEEPGRAM_TTS_MODEL` | `flux-naveen-en` | Narration model/voice |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | — | Reserved for AI-assisted drafting; nothing reads them yet |
+
+Keys stay in the server environment: never in a lesson row, never in the browser.
+
+## Project map
+
+| Path | What lives there |
+| --- | --- |
+| `server/index.ts` | The Express app, Vite middleware in dev and every learner route |
+| `server/public-api.ts` / `server/admin-api.ts` | Public learning API and the role-gated Studio API |
+| `server/auth.ts` / `server/roles.ts` | Sessions, password hashing and the one permission table (`can()`) |
+| `server/algorithms/` | Trusted implementations that produce verified traces, with their tests |
+| `server/anim/` | The deterministic 2.5D motion engine and its scene inspectors |
+| `server/render/` | Frame painting, ffmpeg encoding, quality gate, profiles, cleanup |
+| `server/db.ts`, `server/content.ts` | SQLite schema, seed concepts, content helpers |
+| `server/pipeline.ts` | Derives a lesson's stage from its trace, storyboard and renders |
+| `src/pages/public/`, `src/pages/admin/` | Learner screens and Studio screens |
+| `src/components/` | Shared panels: renders, narration, publishing, cleanup |
+| `public/fonts/` | Bundled video typefaces (SIL Open Font License) |
+
+## Troubleshooting
+
+- **Port 3000 busy** — `PORT=3001 npm run dev`.
+- **A lesson refuses to render** — its concept needs a trusted animation
+  configuration; rendering is blocked rather than faked (see *Known gaps*).
+- **Videos disappeared after a restart** — they were in `/tmp`; set `DATA_DIR` and
+  `MEDIA_DIR` to a permanent path.
+- **Boot fails on fonts** — `public/fonts/` must be intact; rendering refuses a
+  substitute typeface on purpose.
+
 ## Stack
 
 | Layer | Choice | Why |
@@ -250,7 +322,8 @@ profiles (`server/render/profiles.test.ts`), text fitting and anchor placement
 (`server/voiceover.test.ts`), the file-level quality checks
 (`server/render/quality.test.ts`) and the stage derivation (`server/pipeline.test.ts`).
 
-Environment variables: `PORT` (3000), `DATA_DIR` (SQLite), `MEDIA_DIR` (MP4 output).
+Environment variables (`PORT`, `DATA_DIR`, `MEDIA_DIR`, `DEEPGRAM_*`) are listed with
+their defaults under *Quick start*; `.env.example` is the template for a local `.env`.
 
 Voice-over narration is spoken from the lesson's voice-over script by a TTS
 provider. Deepgram is the wired-up provider; the key lives only in the server

@@ -12,6 +12,25 @@ These are **demonstration workflows** built on sample data to show how I design 
 
 ---
 
+## Featured: Visual CS Lab — a runnable app
+
+[`visual-cs-lab/`](visual-cs-lab/) is the installable application in this repository: a
+Computer Science learning platform whose Studio turns a verified algorithm trace into a
+branded 1080×1920 MP4 short, with a quality gate on every export.
+
+```bash
+git clone https://github.com/imawais-engineer/AI-Automation.git
+cd AI-Automation/visual-cs-lab
+npm ci
+npm run dev        # http://localhost:3000
+```
+
+Node.js 20.19+ is the only prerequisite — ffmpeg and the video fonts ship with the
+project, and storage is SQLite. Setup, environment variables, the render pipeline and the
+API are documented in [visual-cs-lab/README.md](visual-cs-lab/README.md).
+
+---
+
 ## What This Repository Shows
 
 This portfolio demonstrates:
