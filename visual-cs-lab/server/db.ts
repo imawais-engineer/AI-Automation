@@ -139,6 +139,16 @@ CREATE TABLE IF NOT EXISTS thumbnails (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS video_captions (
+  render_id TEXT NOT NULL REFERENCES render_jobs(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (render_id, platform)
+);
+
 CREATE TABLE IF NOT EXISTS publish_jobs (
   id TEXT PRIMARY KEY,
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,

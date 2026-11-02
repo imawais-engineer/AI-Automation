@@ -6,6 +6,7 @@ import RenderQuality from '../components/RenderQuality';
 import RenderCleanup from '../components/RenderCleanup';
 import RenderDuplicates from '../components/RenderDuplicates';
 import PublishPanel from '../components/PublishPanel';
+import VideoCaptions from '../components/VideoCaptions';
 
 const ACTIVE = ['queued', 'rendering', 'encoding', 'validating'];
 
@@ -46,6 +47,7 @@ export default function Renders() {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [publishing, setPublishing] = useState<string | null>(null);
+  const [tab, setTab] = useState<'overview' | 'captions'>('overview');
 
   const load = useCallback(async () => {
     try {
@@ -217,7 +219,17 @@ export default function Renders() {
               )}
             </div>
           </div>
+          <div className="chips" style={{ marginTop: 4 }}>
+            <button className={`chip ${tab === 'overview' ? 'on' : ''}`} onClick={() => setTab('overview')}>
+              Overview
+            </button>
+            <button className={`chip ${tab === 'captions' ? 'on' : ''}`} onClick={() => setTab('captions')}>
+              Video Captions
+            </button>
+          </div>
           {focused.error && <div className="notice bad">{focused.error}</div>}
+          {tab === 'captions' && <VideoCaptions key={focused.id} renderId={focused.id} />}
+          {tab === 'overview' && (
           <div className="grid two">
             <RenderQuality job={focused} />
             <div>
@@ -255,7 +267,8 @@ export default function Renders() {
               </div>
             </div>
           </div>
-          {publishing === focused.id && (
+          )}
+          {tab === 'overview' && publishing === focused.id && (
             <PublishPanel key={focused.id} lessonId={focused.lesson_id} renderId={focused.id} />
           )}
         </div>

@@ -11,7 +11,8 @@ import { createServer as createViteServer } from 'vite';
 import { db, newId, nowIso, readBrand, readBranding } from './db.ts';
 import { brandingFrom } from './branding.ts';
 import { ensureThumbnail, jpegFor, saveManualThumbnail, thumbnailStatus } from './render/thumbnails.ts';
-import { buildPublishCopy } from './publish-copy.ts';
+import { buildPublishCopy, type PublishCopyInput } from './publish-copy.ts';
+import { CAPTION_PLATFORMS, captionsFor, type SavedCaption } from './video-captions.ts';
 import { parseOps, trace, validate } from './algorithms/stack.ts';
 import { traceBinarySearch } from './algorithms/binary-search.ts';
 import {
@@ -979,12 +980,11 @@ app.get('/api/renders/:id/video', requireAction('content:read'), (req, res) => {
 
 /* ------------------------------------------------------------ publish copy */
 
-/** Per-platform post copy for a lesson: Facebook, Instagram, LinkedIn, X, YouTube. */
-app.get('/api/lessons/:id/publish-copy', requireAction('content:read'), (req, res) => {
-  const bundle = lessonBundle(req.params.id);
-  if (!bundle) return res.status(404).json({ error: 'Lesson not found.' });
-  const run = runConcept(effectiveConcept(bundle.lesson, bundle.concept));
-  const copy = buildPublishCopy({
+/** The lesson fields the platform copy is written from. */
+function publishCopyInput(lessonId: string): PublishCopyInput | null {
+  const bundle = lessonBundle(lessonId);
+  if (!bundle) return null;
+  return {
     title: bundle.lesson.title,
     hook: bundle.lesson.hook,
     takeaway: bundle.lesson.key_takeaway,
@@ -992,8 +992,58 @@ app.get('/api/lessons/:id/publish-copy', requireAction('content:read'), (req, re
     space: bundle.concept.complexity_space,
     category: String((bundle.concept as unknown as { category?: string }).category || ''),
     slug: String((bundle.lesson as unknown as { slug?: string }).slug || '')
-  });
-  res.json({ lessonId: req.params.id, copy, verified: run.validation.ok });
+  };
+}
+
+function savedCaptions(renderId: string): SavedCaption[] {
+  return db
+    .prepare('SELECT platform, title, description, updated_at FROM video_captions WHERE render_id = ?')
+    .all(renderId) as SavedCaption[];
+}
+
+/** Per-platform post copy for a lesson: Facebook, Instagram, LinkedIn, X, YouTube. */
+app.get('/api/lessons/:id/publish-copy', requireAction('content:read'), (req, res) => {
+  const input = publishCopyInput(req.params.id);
+  if (!input) return res.status(404).json({ error: 'Lesson not found.' });
+  const bundle = lessonBundle(req.params.id)!;
+  const run = runConcept(effectiveConcept(bundle.lesson, bundle.concept));
+  res.json({ lessonId: req.params.id, copy: buildPublishCopy(input), verified: run.validation.ok });
+});
+
+/* -------------------------------------------------------- video captions */
+
+/** The four platform captions of one finished video, saved or drafted. */
+app.get('/api/renders/:id/captions', requireAction('content:read'), (req, res) => {
+  const job = db.prepare('SELECT id, lesson_id FROM render_jobs WHERE id = ?').get(req.params.id) as
+    | { id: string; lesson_id: string }
+    | undefined;
+  if (!job) return res.status(404).json({ error: 'Render job not found.' });
+  const input = publishCopyInput(job.lesson_id);
+  if (!input) return res.status(404).json({ error: 'Render job not found.' });
+  res.json({ renderId: job.id, captions: captionsFor(input, savedCaptions(job.id)) });
+});
+
+/** Save this video's own title and description for one platform. */
+app.put('/api/renders/:id/captions/:platform', requireAction('content:write'), (req, res) => {
+  const job = db.prepare('SELECT id, lesson_id FROM render_jobs WHERE id = ?').get(req.params.id) as
+    | { id: string; lesson_id: string }
+    | undefined;
+  if (!job) return res.status(404).json({ error: 'Render job not found.' });
+  const platform = String(req.params.platform);
+  if (!CAPTION_PLATFORMS.includes(platform as (typeof CAPTION_PLATFORMS)[number])) {
+    return res.status(400).json({ error: 'Choose youtube, facebook, instagram or tiktok.' });
+  }
+  const body = req.body as Record<string, unknown>;
+  const stamp = nowIso();
+  db.prepare(
+    `INSERT INTO video_captions (render_id, platform, title, description, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (render_id, platform) DO UPDATE SET
+       title = excluded.title, description = excluded.description, updated_at = excluded.updated_at`
+  ).run(job.id, platform, String(body.title ?? ''), String(body.description ?? ''), stamp, stamp);
+  const input = publishCopyInput(job.lesson_id);
+  if (!input) return res.status(404).json({ error: 'Render job not found.' });
+  res.json({ renderId: job.id, captions: captionsFor(input, savedCaptions(job.id)) });
 });
 
 /* ---------------------------------------------------------------- publishing */
