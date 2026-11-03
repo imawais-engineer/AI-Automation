@@ -61,6 +61,79 @@ import {
   type BstConfig,
   type BstStep
 } from './algorithms/binary-search-trees.ts';
+import {
+  isHeapConfig,
+  parseHeapOps,
+  traceHeap,
+  validateHeapTrace,
+  type HeapConfig,
+  type HeapStep
+} from './algorithms/heaps.ts';
+import {
+  isGraphConfig,
+  parseGraphEdges,
+  parseGraphNodes,
+  traceGraph,
+  validateGraphTrace,
+  type GraphConfig,
+  type GraphStep
+} from './algorithms/graphs.ts';
+import {
+  isLinearSearchConfig,
+  traceLinearSearch,
+  validateLinearSearchTrace,
+  type LinearSearchConfig,
+  type LinearSearchStep
+} from './algorithms/linear-search.ts';
+import {
+  isBubbleSortConfig,
+  traceBubbleSort,
+  validateBubbleSortTrace,
+  type BubbleSortConfig,
+  type BubbleStep
+} from './algorithms/bubble-sort.ts';
+import {
+  isInsertionSortConfig,
+  traceInsertionSort,
+  validateInsertionSortTrace,
+  type InsertionSortConfig,
+  type InsertionStep
+} from './algorithms/insertion-sort.ts';
+import {
+  isMergeSortConfig,
+  traceMergeSort,
+  validateMergeSortTrace,
+  type MergeSortConfig,
+  type MergeStep
+} from './algorithms/merge-sort.ts';
+import {
+  isQuickSortConfig,
+  traceQuickSort,
+  validateQuickSortTrace,
+  type QuickSortConfig,
+  type QuickStep
+} from './algorithms/quick-sort.ts';
+import {
+  isDfsConfig,
+  traceDfs,
+  validateDfsTrace,
+  type DfsConfig,
+  type DfsStep
+} from './algorithms/graph-dfs.ts';
+import {
+  isRecursionConfig,
+  traceRecursion,
+  validateRecursionTrace,
+  type RecursionConfig,
+  type RecursionStep
+} from './algorithms/recursion.ts';
+import {
+  isDpConfig,
+  traceDp,
+  validateDpTrace,
+  type DpConfig,
+  type DpStep
+} from './algorithms/dynamic-programming.ts';
 import { structureChrome, type StructureRun } from './structure-run.ts';
 import { brandingFrom, openingCopy, type Branding } from './branding.ts';
 
@@ -103,9 +176,24 @@ export type LinkedListVisual = {
 
 export type StructureVisual = {
   kind: 'structure';
-  /** Which structure the trace drives: queue, hash table, tree or BST. */
+  /** Which structure the trace drives: queue, hash table, tree, BST, heap, graph, scan or sort. */
   structureKind: StructureRun['kind'];
-  steps: (QueueStep | HashStep | TreeStep | BstStep)[];
+  steps: (
+    | QueueStep
+    | HashStep
+    | TreeStep
+    | BstStep
+    | HeapStep
+    | GraphStep
+    | LinearSearchStep
+    | BubbleStep
+    | InsertionStep
+    | MergeStep
+    | QuickStep
+    | DfsStep
+    | RecursionStep
+    | DpStep
+  )[];
 };
 
 export type SceneVisual = StackVisual | BinarySearchVisual | ArrayVisual | LinkedListVisual | StructureVisual;
@@ -404,6 +492,309 @@ export function runConcept(concept: ConceptInput): ConceptRun {
         space: 'O(n)',
         arraySize: trace.nodes.length,
         comparisons: trace.comparisons
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isHeapConfig(config)) {
+    const heapConfig = config as HeapConfig;
+    const trace = traceHeap(parseHeapOps(heapConfig.ops));
+    const validation = validateHeapTrace(trace, heapConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'heap', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `runs ${trace.steps.length} heap operations and leaves [${trace.final.join(', ')}] with ${trace.root} at the root`,
+      input: [],
+      target: null,
+      comparisons: trace.comparisons,
+      complexity: {
+        time: 'O(log n) push and pop, O(1) peek',
+        space: 'O(n)',
+        arraySize: trace.final.length,
+        comparisons: trace.comparisons
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isGraphConfig(config)) {
+    const graphConfig = config as GraphConfig;
+    const trace = traceGraph({ nodes: graphConfig.nodes, edges: graphConfig.edges, start: graphConfig.start });
+    const validation = validateGraphTrace(trace, graphConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'graph', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `walks ${trace.order.length} of ${parseGraphNodes(graphConfig.nodes).length} vertices breadth-first from ${trace.start}`,
+      input: [],
+      target: null,
+      comparisons: trace.steps.length,
+      complexity: {
+        time: 'O(V + E) traversal',
+        space: 'O(V + E) adjacency list',
+        arraySize: parseGraphEdges(graphConfig.edges, parseGraphNodes(graphConfig.nodes)).length,
+        comparisons: trace.steps.length
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isLinearSearchConfig(config)) {
+    const searchConfig = config as LinearSearchConfig;
+    const trace = traceLinearSearch({ array: searchConfig.array, target: searchConfig.target });
+    const validation = validateLinearSearchTrace(trace, searchConfig.expect, searchConfig.array, Number(searchConfig.target));
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'linear-search', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: trace.foundIndex,
+      summary:
+        trace.foundIndex === null
+          ? `scans ${trace.comparisons} cells without finding ${trace.target}`
+          : `finds ${trace.target} at index ${trace.foundIndex} in ${trace.comparisons} comparison${trace.comparisons === 1 ? '' : 's'}`,
+      input: trace.array,
+      target: trace.target,
+      comparisons: trace.comparisons,
+      complexity: {
+        time: 'O(n) scan',
+        space: 'O(1)',
+        arraySize: trace.array.length,
+        comparisons: trace.comparisons
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isBubbleSortConfig(config)) {
+    const sortConfig = config as BubbleSortConfig;
+    const trace = traceBubbleSort(sortConfig.array);
+    const validation = validateBubbleSortTrace(trace, sortConfig.expect, sortConfig.array);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'bubble-sort', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `sorts ${trace.array.length} values in ${trace.passes} pass${trace.passes === 1 ? '' : 'es'} with ${trace.swaps} swap${trace.swaps === 1 ? '' : 's'}`,
+      input: trace.array,
+      target: null,
+      comparisons: trace.comparisons,
+      complexity: {
+        time: 'O(n²) comparisons',
+        space: 'O(1)',
+        arraySize: trace.array.length,
+        comparisons: trace.comparisons
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isInsertionSortConfig(config)) {
+    const sortConfig = config as InsertionSortConfig;
+    const trace = traceInsertionSort(sortConfig.array);
+    const validation = validateInsertionSortTrace(trace, sortConfig.expect, sortConfig.array);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'insertion-sort', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `sorts ${trace.array.length} values with ${trace.shifts} shift${trace.shifts === 1 ? '' : 's'}`,
+      input: trace.array,
+      target: null,
+      comparisons: trace.comparisons,
+      complexity: {
+        time: 'O(n²) worst, O(n) nearly sorted',
+        space: 'O(1)',
+        arraySize: trace.array.length,
+        comparisons: trace.comparisons
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isMergeSortConfig(config)) {
+    const sortConfig = config as MergeSortConfig;
+    const trace = traceMergeSort(sortConfig.array);
+    const validation = validateMergeSortTrace(trace, sortConfig.expect, sortConfig.array);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'merge-sort', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `sorts ${trace.array.length} values in ${trace.merges} merge${trace.merges === 1 ? '' : 's'} over ${trace.depth} level${trace.depth === 1 ? '' : 's'}`,
+      input: trace.array,
+      target: null,
+      comparisons: trace.comparisons,
+      complexity: {
+        time: 'O(n log n)',
+        space: 'O(n) auxiliary',
+        arraySize: trace.array.length,
+        comparisons: trace.comparisons
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isQuickSortConfig(config)) {
+    const sortConfig = config as QuickSortConfig;
+    const trace = traceQuickSort(sortConfig.array);
+    const validation = validateQuickSortTrace(trace, sortConfig.expect, sortConfig.array);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'quick-sort', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `sorts ${trace.array.length} values in ${trace.partitions} partition${trace.partitions === 1 ? '' : 's'}`,
+      input: trace.array,
+      target: null,
+      comparisons: trace.comparisons,
+      complexity: {
+        time: 'O(n log n) average, O(n²) worst',
+        space: 'O(log n) stack',
+        arraySize: trace.array.length,
+        comparisons: trace.comparisons
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isDfsConfig(config)) {
+    const dfsConfig = config as DfsConfig;
+    const trace = traceDfs({ nodes: dfsConfig.nodes, edges: dfsConfig.edges, start: dfsConfig.start });
+    const validation = validateDfsTrace(trace, dfsConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'graph-dfs', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `walks ${trace.order.length} of ${parseGraphNodes(dfsConfig.nodes).length} vertices depth-first from ${trace.start}`,
+      input: [],
+      target: null,
+      comparisons: trace.steps.length,
+      complexity: {
+        time: 'O(V + E) traversal',
+        space: 'O(V + E) adjacency list',
+        arraySize: parseGraphEdges(dfsConfig.edges, parseGraphNodes(dfsConfig.nodes)).length,
+        comparisons: trace.steps.length
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isRecursionConfig(config)) {
+    const recursionConfig = config as RecursionConfig;
+    const trace = traceRecursion({ n: recursionConfig.n });
+    const validation = validateRecursionTrace(trace, recursionConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'recursion', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `descends ${trace.calls} calls and unwinds ${trace.returns} returns to reach fact(${trace.n}) = ${trace.result}`,
+      input: [],
+      target: null,
+      comparisons: trace.returns,
+      complexity: {
+        time: `${trace.calls} calls — one per subproblem`,
+        space: `O(${trace.deepest}) call stack`,
+        arraySize: trace.deepest,
+        comparisons: trace.returns
+      },
+      errors: [],
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isDpConfig(config)) {
+    const dpConfig = config as DpConfig;
+    const trace = traceDp({ n: dpConfig.n });
+    const validation = validateDpTrace(trace, dpConfig.expect);
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'dp-table', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `fills ${trace.steps.length} states once each to reach fib(${trace.n}) = ${trace.result}`,
+      input: [],
+      target: null,
+      comparisons: trace.steps.length,
+      complexity: {
+        time: `O(${trace.n}) states`,
+        space: `O(${trace.n}) table`,
+        arraySize: trace.table.length,
+        comparisons: trace.steps.length
       },
       errors: [],
       validation,
@@ -941,16 +1332,156 @@ function structureLessonCopy(run: StructureRun): {
     };
   }
 
-  const trace = run.trace;
-  return {
-    hook: 'Smaller goes left. Bigger goes right. One path finds the key.',
+  if (run.kind === 'bst') {
+    const trace = run.trace;
+    return {
+      hook: 'Smaller goes left. Bigger goes right. One path finds the key.',
     setupTitle: 'Left is smaller, right is bigger',
     setupCaption: 'The ordering invariant is the whole data structure: it tells the search which way to go.',
     traceTitle: `Trace · insert ${trace.insert.join(', ')} · search ${trace.search}`,
     traceSubtitle: 'compare · turn left or right · repeat',
     traceCaption: 'Each comparison throws one whole side of the tree away.',
     complexityTitle: 'Cost is the height',
-    complexityCaption: `${trace.comparisons} comparison${trace.comparisons === 1 ? '' : 's'} for ${trace.search}. Balanced height is log n; a sorted insert order degenerates to n.`
+      complexityCaption: `${trace.comparisons} comparison${trace.comparisons === 1 ? '' : 's'} for ${trace.search}. Balanced height is log n; a sorted insert order degenerates to n.`
+    };
+  }
+
+  if (run.kind === 'heap') {
+    const trace = run.trace;
+    return {
+      hook: 'The smallest value is always the one at the top.',
+      setupTitle: 'A complete tree, stored as an array',
+      setupCaption: 'The children of index i are 2i+1 and 2i+2, so the parent of i is (i-1)/2 — the tree needs no pointers at all.',
+      traceTitle: `Trace · PUSH ${trace.pushed.join(', ')}${trace.popped.length > 0 ? ` · ${trace.popped.length} POP` : ''}`,
+      traceSubtitle: 'append at the end · sift up · move the last value to the root and sift down',
+      traceCaption: 'Every PUSH and POP walks one root-to-leaf path, and that path is the log in O(log n).',
+      complexityTitle: 'One path, log n',
+      complexityCaption: `${trace.comparisons} comparisons this run. PEEK reads the root in O(1); PUSH and POP sift along one path. Space: O(n).`
+    };
+  }
+
+  if (run.kind === 'graph') {
+    const trace = run.trace;
+    return {
+      hook: 'Places and roads: the edges decide who you can reach next.',
+      setupTitle: 'Vertices and the edges between them',
+      setupCaption: `Each vertex keeps a list of its outgoing neighbours — ${trace.nodes.length} vertices and ${trace.edges.length} edges is all the structure stores.`,
+      traceTitle: `Trace · breadth-first from ${trace.start}`,
+      traceSubtitle: 'visit the vertex · discover its new neighbours at the back of the queue',
+      traceCaption: 'The frontier is a queue, so every neighbour of a vertex is found before the walk goes one hop deeper.',
+      complexityTitle: 'Every vertex and edge once',
+      complexityCaption: `${trace.steps.length} vertices visited, each edge checked once — O(V + E). The adjacency list costs O(V + E) space.`
+    };
+  }
+
+  if (run.kind === 'linear-search') {
+    const trace = run.trace;
+    return {
+      hook: 'No order needed: just check every cell until the target shows up.',
+      setupTitle: 'One pass, one comparison at a time',
+      setupCaption: `The scan reads a[0], a[1], a[2] … and stops the moment a cell equals ${trace.target}.`,
+      traceTitle: `Trace · target ${trace.target} in [${trace.array.join(', ')}]`,
+      traceSubtitle: 'compare the cell · match? stop · otherwise move one cell right',
+      traceCaption: 'The work is however far the target happens to be — up to every cell in the array.',
+      complexityTitle: 'Linear in the worst case',
+      complexityCaption: `${trace.comparisons} comparisons this run${trace.foundIndex === null ? ' and no match' : `, found at index ${trace.foundIndex}`}. Worst case O(n), space O(1).`
+    };
+  }
+
+  if (run.kind === 'insertion-sort') {
+    const trace = run.trace;
+    return {
+      hook: 'Grow a sorted prefix by inserting each next value.',
+      setupTitle: 'A sorted prefix, one insert at a time',
+      setupCaption: `a[0..${trace.passes}] is already sorted; the next value slides left past every larger value until it fits.`,
+      traceTitle: `Trace · [${trace.array.join(', ')}] inserted into order`,
+      traceSubtitle: 'hold the key · shift larger values right · drop the key in the gap',
+      traceCaption: 'Nothing to the left of the gap has to move again — every pass leaves one more value settled.',
+      complexityTitle: 'Quadratic worst case, linear when nearly sorted',
+      complexityCaption: `${trace.comparisons} comparisons and ${trace.shifts} shifts this run. Worst case O(n²), best case O(n), O(1) extra space.`
+    };
+  }
+
+  if (run.kind === 'merge-sort') {
+    const trace = run.trace;
+    return {
+      hook: 'Divide, sort halves, merge them in linear time.',
+      setupTitle: 'Split until single values, then merge',
+      setupCaption: 'A one-value run is already sorted. Merging two sorted runs walks them once and writes the next smallest value each time.',
+      traceTitle: `Trace · ${trace.merges} merges over ${trace.depth} level${trace.depth === 1 ? '' : 's'}`,
+      traceSubtitle: 'split in half · sort each half · merge the sorted runs',
+      traceCaption: 'Each level touches every value once, and there are log n levels — that is the n log n.',
+      complexityTitle: 'Log n levels, linear merges',
+      complexityCaption: `${trace.comparisons} comparisons this run. O(n log n) time, O(n) auxiliary space, and the merge keeps equal values in order.`
+    };
+  }
+
+  if (run.kind === 'quick-sort') {
+    const trace = run.trace;
+    return {
+      hook: 'Partition around a pivot, then sort each side.',
+      setupTitle: 'One pass puts the pivot in place',
+      setupCaption: 'Every value smaller than the pivot moves left of the boundary; the pivot then swaps into the boundary and never moves again.',
+      traceTitle: `Trace · ${trace.partitions} partitions in [${trace.array.join(', ')}]`,
+      traceSubtitle: 'pick the last value as pivot · move smaller values left · swap the pivot in',
+      traceCaption: 'Once the pivot lands, the two sides are independent — that is what keeps the work balanced.',
+      complexityTitle: 'Fast on average, quadratic with bad pivots',
+      complexityCaption: `${trace.comparisons} comparisons and ${trace.swaps} swaps this run. Balanced pivots give O(n log n); an already sorted array with a naive pivot gives O(n²).`
+    };
+  }
+
+  if (run.kind === 'graph-dfs') {
+    const trace = run.trace;
+    return {
+      hook: 'Follow one branch as far as possible before backtracking.',
+      setupTitle: 'A call stack instead of a queue',
+      setupCaption: `From ${trace.start}, every neighbour that has not been seen is visited immediately — the walk only backs up when a vertex has nothing new left.`,
+      traceTitle: `Trace · depth-first from ${trace.start}`,
+      traceSubtitle: 'visit the vertex · descend into its first unseen neighbour · back up when stuck',
+      traceCaption: 'The call stack is the frontier: the most recently reached vertex is always explored next.',
+      complexityTitle: 'Every vertex and edge once',
+      complexityCaption: `${trace.order.length} of ${trace.nodes.length} vertices visited, each edge checked once — O(V + E). The stack costs O(V) in the worst case.`
+    };
+  }
+
+  if (run.kind === 'recursion') {
+    const trace = run.trace;
+    return {
+      hook: 'Solve a problem by solving smaller copies of itself.',
+      setupTitle: 'A base case and a smaller subproblem',
+      setupCaption: `fact(${trace.n}) cannot answer until fact(${trace.n - 1}) does — so calls stack up until fact(1) returns 1, and then every caller multiplies on the way back.`,
+      traceTitle: `Trace · fact(${trace.n}) in ${trace.calls} calls`,
+      traceSubtitle: 'call with a smaller argument · hit the base case · return a value to the caller',
+      traceCaption: 'The answer travels back up one return at a time; each waiting call multiplies its own value in.',
+      complexityTitle: 'Depth is the space cost',
+      complexityCaption: `${trace.deepest} frames deep at most. ${trace.calls} calls and ${trace.returns} returns — O(n) time and O(n) stack for fact(n).`
+    };
+  }
+
+  if (run.kind === 'bubble-sort') {
+    const bubble = run.trace;
+    return {
+      hook: 'Compare the neighbours and swap them — the biggest value bubbles to the end.',
+      setupTitle: 'Neighbours out of order swap places',
+      setupCaption: `Each pass walks the unsorted run comparing ${bubble.array.length - 1} neighbour pairs, and settles one more value at the end.`,
+      traceTitle: `Trace · [${bubble.array.join(', ')}] sorted in ${bubble.passes} pass${bubble.passes === 1 ? '' : 'es'}`,
+      traceSubtitle: 'compare a[i] with a[i+1] · swap when the left is bigger · shrink the run',
+      traceCaption: 'The settled tail grows by one every pass, so each pass has one less pair to compare.',
+      complexityTitle: 'Quadratic comparisons',
+      complexityCaption: `${bubble.comparisons} comparisons and ${bubble.swaps} swaps this run. Worst case O(n²) comparisons, O(1) extra space.`
+    };
+  }
+
+  const dp = run.trace;
+  return {
+    hook: 'Cache overlapping subproblems to avoid recomputation.',
+    setupTitle: 'Solve each state once, left to right',
+    setupCaption: 'fib(i) only needs fib(i−1) and fib(i−2). Filling a table from the base cases forward solves each state exactly once.',
+    traceTitle: `Trace · ${dp.steps.length} table cells for fib(${dp.n})`,
+    traceSubtitle: 'write the base cases · read the two earlier cells · store the sum',
+    traceCaption: 'Naive recursion re-solves the same branches; the table turns that into one pass over the states.',
+    complexityTitle: 'States × transition cost',
+    complexityCaption: `${dp.table.length} cells, one addition each — O(${dp.n}) time and space here. Memory can drop to two values when only the previous states are needed.`
   };
 }
 

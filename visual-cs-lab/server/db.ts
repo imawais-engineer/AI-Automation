@@ -5,6 +5,8 @@ import Database from 'better-sqlite3';
 
 import { buildScenes, runConcept, type ConceptInput, type LessonInput } from './scenes.ts';
 import { DEFAULT_QUEUE_OPS } from './algorithms/queues.ts';
+import { DEFAULT_HEAP_OPS } from './algorithms/heaps.ts';
+import { DEFAULT_GRAPH_EDGES, DEFAULT_GRAPH_NODES } from './algorithms/graphs.ts';
 import { DEFAULT_TREE_NODES } from './algorithms/trees.ts';
 import { ensureContentSchema } from './content-schema.ts';
 import { BRAND_DEFAULTS, brandingFrom, type Branding } from './branding.ts';
@@ -338,6 +340,110 @@ const TREE_ANIMATION = {
   kind: 'tree',
   nodes: DEFAULT_TREE_NODES,
   expect: { order: [8, 3, 10, 1, 6, 14], levels: 3 }
+};
+
+/**
+ * Trusted animation configurations for the scan, sort, heap and graph shorts.
+ * Each carries the result it is verified against: where the scan stops, the
+ * sorted array and swap count, the heap's final layout and POP returns, and the
+ * order a breadth-first walk reaches every vertex.
+ */
+const HEAP_ANIMATION = {
+  kind: 'heap',
+  ops: DEFAULT_HEAP_OPS,
+  expect: { finalHeap: [3, 5, 8], popReturns: [1, 2], root: 3 }
+};
+
+const GRAPH_ANIMATION = {
+  kind: 'graph',
+  nodes: DEFAULT_GRAPH_NODES,
+  edges: DEFAULT_GRAPH_EDGES,
+  start: 'A',
+  expect: { order: ['A', 'B', 'C', 'D', 'E', 'F'] }
+};
+
+const LINEAR_SEARCH_ANIMATION = {
+  kind: 'linear-search',
+  array: [7, 12, 4, 9, 5, 21],
+  target: 5,
+  expect: { foundIndex: 4, comparisons: 5 }
+};
+
+const BUBBLE_SORT_ANIMATION = {
+  kind: 'bubble-sort',
+  array: [5, 1, 4, 2, 8],
+  expect: { sorted: [1, 2, 4, 5, 8], swaps: 4 }
+};
+
+/**
+ * Trusted configurations for the three sort shorts that follow bubble sort, the
+ * two traversal shorts and the recursion/DP pair. Each carries the result the
+ * trace is verified against: the sorted array, the visit order, the factorial
+ * value and the fibonacci result.
+ */
+const SORT_DEMO_ARRAY = [5, 1, 4, 2, 8, 7, 3, 6];
+const SORT_DEMO_SORTED = [1, 2, 3, 4, 5, 6, 7, 8];
+
+const INSERTION_SORT_ANIMATION = {
+  kind: 'insertion-sort',
+  array: SORT_DEMO_ARRAY,
+  expect: { sorted: SORT_DEMO_SORTED }
+};
+
+const MERGE_SORT_ANIMATION = {
+  kind: 'merge-sort',
+  array: SORT_DEMO_ARRAY,
+  expect: { sorted: SORT_DEMO_SORTED, merges: 7 }
+};
+
+const QUICK_SORT_ANIMATION = {
+  kind: 'quick-sort',
+  array: SORT_DEMO_ARRAY,
+  expect: { sorted: SORT_DEMO_SORTED }
+};
+
+const BFS_ANIMATION = {
+  kind: 'graph',
+  nodes: ['A', 'B', 'C', 'D', 'E', 'F'],
+  edges: [
+    ['A', 'B'],
+    ['A', 'C'],
+    ['B', 'D'],
+    ['C', 'D'],
+    ['D', 'E'],
+    ['E', 'F']
+  ],
+  start: 'A',
+  expect: { order: ['A', 'B', 'C', 'D', 'E', 'F'] }
+};
+
+const DFS_ANIMATION = {
+  kind: 'graph-dfs',
+  nodes: ['A', 'B', 'C', 'D', 'E', 'F'],
+  edges: [
+    ['A', 'B'],
+    ['A', 'C'],
+    ['B', 'D'],
+    ['C', 'D'],
+    ['D', 'E'],
+    ['E', 'F']
+  ],
+  start: 'A',
+  expect: { order: ['A', 'B', 'D', 'C', 'E', 'F'] }
+};
+
+const RECURSION_ANIMATION = {
+  kind: 'recursion',
+  problem: 'factorial',
+  n: 4,
+  expect: { result: 24 }
+};
+
+const DP_ANIMATION = {
+  kind: 'dp-table',
+  problem: 'fibonacci',
+  n: 8,
+  expect: { result: 21 }
 };
 
 const BST_ANIMATION = {
@@ -1055,6 +1161,54 @@ const STRUCTURE_LESSONS: Record<string, Record<string, string>> = {
     key_takeaway: 'Insert and search follow the ordering invariant; the cost is the height of the tree.',
     cta: "Understand the algorithm. Don't just memorize it.",
     sources: 'CLRS §12.1–12.3; Sedgewick & Wayne, Algorithms (4th ed.), §3.2.'
+  },
+  heaps: {
+    title: 'Heaps',
+    audience: 'Beginner software engineering students',
+    objective: 'Watch PUSH and POP restore the heap property along one path.',
+    hook: 'The smallest value is always the one at the top.',
+    narration:
+      'Push five, three, eight and one. Each new value is appended at the end of the array and sifted up until its parent is smaller. The root is always the minimum, so POP returns one, moves the last value to the root and sifts it down. Peek is O(1); push and pop walk one path, so they are O(log n).',
+    on_screen_text: 'Parent ≤ child in the array: the root is the minimum.',
+    key_takeaway: 'A binary heap stores a complete tree in an array: children of i are 2i+1 and 2i+2. Push and pop restore the heap property in O(log n); peek is O(1).',
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: 'CLRS §6.1–6.5; Sedgewick & Wayne, Algorithms (4th ed.), §2.4.'
+  },
+  graphs: {
+    title: 'Graphs',
+    audience: 'Beginner software engineering students',
+    objective: 'Follow a breadth-first walk across vertices and edges.',
+    hook: 'Places and roads: the edges decide who you can reach next.',
+    narration:
+      'A graph is vertices joined by edges. Each vertex keeps a list of its neighbours, which is the adjacency list. Breadth-first starts at one vertex, puts its new neighbours in a queue, and visits them in turn. Every vertex and every edge is looked at once, so the walk is O(V plus E).',
+    on_screen_text: 'Vertices, edges, neighbours: breadth-first explores one hop at a time.',
+    key_takeaway: 'Graphs are directed or undirected, weighted or not. Adjacency lists use O(V+E) space and suit sparse graphs; adjacency matrices give O(1) edge tests at O(V²) space.',
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: 'CLRS §22.1–22.2; Sedgewick & Wayne, Algorithms (4th ed.), §4.1–4.2.'
+  },
+  'linear-search': {
+    title: 'Linear Search',
+    audience: 'Beginner software engineering students',
+    objective: 'Watch a scan compare cells until the target appears.',
+    hook: 'No order needed: check every cell until the target shows up.',
+    narration:
+      'Linear search reads the array from the left. Seven is not five, twelve is not five, four is not five. Nine is not five either. The fifth cell is five, so the scan stops and reports index four. Every cell costs one comparison, and no sorting was required.',
+    on_screen_text: 'Compare one cell at a time; stop at the first match.',
+    key_takeaway: 'Linear search needs no ordering, does n comparisons in the worst case and works on streams. Sorting first costs O(n log n), so linear search wins on single lookups.',
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: 'CLRS §2.1 (searching); Sedgewick & Wayne, Algorithms (4th ed.), §1.4.'
+  },
+  'bubble-sort': {
+    title: 'Bubble Sort',
+    audience: 'Beginner software engineering students',
+    objective: 'See neighbour swaps settle one value at the end of each pass.',
+    hook: 'Compare the neighbours and swap them — the biggest value bubbles to the end.',
+    narration:
+      'Bubble sort compares the first two values. Five is bigger than one, so they swap; then five meets four and swaps again, then two. Eight is already bigger, so the pair stays. After one pass the largest value sits at the end. Each pass settles one more value, and a pass with no swaps means the array is sorted.',
+    on_screen_text: 'Neighbours out of order swap; the largest bubbles right.',
+    key_takeaway: 'Bubble sort compares every neighbour pair in each pass — O(n²) comparisons in the worst case, O(1) extra space, and a clean pass proves the array sorted.',
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: 'CLRS §2.2 (bubble sort exercise); Sedgewick & Wayne, Algorithms (4th ed.), §2.1.'
   }
 };
 
@@ -1070,7 +1224,18 @@ function ensureStructureDemos(): void {
     queues: QUEUE_ANIMATION,
     'hash-tables': HASH_ANIMATION,
     trees: TREE_ANIMATION,
-    'binary-search-trees': BST_ANIMATION
+    'binary-search-trees': BST_ANIMATION,
+    heaps: HEAP_ANIMATION,
+    graphs: GRAPH_ANIMATION,
+    'linear-search': LINEAR_SEARCH_ANIMATION,
+    'bubble-sort': BUBBLE_SORT_ANIMATION,
+    'insertion-sort': INSERTION_SORT_ANIMATION,
+    'merge-sort': MERGE_SORT_ANIMATION,
+    'quick-sort': QUICK_SORT_ANIMATION,
+    'breadth-first-search': BFS_ANIMATION,
+    'depth-first-search': DFS_ANIMATION,
+    recursion: RECURSION_ANIMATION,
+    'dynamic-programming': DP_ANIMATION
   };
 
   for (const [slug, config] of Object.entries(configs)) {
@@ -1106,9 +1271,18 @@ function ensureStructureDemos(): void {
       const duplicated = scenes.some((scene) => String(scene.id || '').includes('-copy-'));
       if (duplicated) continue;
 
-      const traceBeats = scenes.filter((scene) => scene.type === 'trace').length;
+      const traceBeats = scenes.filter((scene) => scene.type === 'trace');
+      // A trace beat with no verified steps cannot animate anything, so it is
+      // rebuilt from the concept's current configuration like a missing one.
+      const emptyTrace = traceBeats.some((scene) => {
+        const steps = (scene as { visual?: { steps?: unknown[] } }).visual?.steps;
+        return !Array.isArray(steps) || steps.length === 0;
+      });
       const mismatched =
-        scenes.length === 0 || !scenes.some((scene) => scene.type === 'open') || traceBeats !== 1;
+        scenes.length === 0 ||
+        !scenes.some((scene) => scene.type === 'open') ||
+        traceBeats.length !== 1 ||
+        emptyTrace;
       if (!mismatched) continue;
 
       const seconds = Number(lesson.duration_seconds) < 30 ? DEMO_SECONDS : Number(lesson.duration_seconds);

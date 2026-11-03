@@ -90,7 +90,9 @@ export function isBinarySearchConfig(config: unknown): config is BinarySearchCon
   // traversal, which the Arrays concept animates instead.
   return (
     candidate.kind === 'binary-search' ||
-    (Array.isArray(candidate.array) && candidate.target !== undefined)
+    // A configuration that names its own kind belongs to that kind; an unnamed
+    // array with a target is the legacy binary search configuration.
+    (candidate.kind === undefined && Array.isArray(candidate.array) && candidate.target !== undefined)
   );
 }
 
