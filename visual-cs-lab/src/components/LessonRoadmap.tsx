@@ -119,6 +119,9 @@ export default function LessonRoadmap({ rows }: { rows: RoadmapRow[] }) {
                       <span className={`badge ${row.content_status === 'published' ? 'ok' : ''}`}>
                         {row.content_status.replace('_', ' ')}
                       </span>
+                      {row.derived.videos.ready > 0 && (
+                        <span className={`badge ${row.derived.videos.stale ? 'warn' : 'good'}`}>video generated</span>
+                      )}
                       <span
                         className="mono"
                         style={{
