@@ -14,7 +14,7 @@ import { clamp01, easeInOutCubic, easeOutCubic, envelope, lerp, track } from './
 import { factsPanel } from './facts.ts';
 import type { Camera, Dims, Palette } from './stage.ts';
 import type { StructurePlan } from './plan.ts';
-import type { StructureFrame, StructureNode, StructureTone } from './structure-types.ts';
+import type { ChartSeries, StructureChart, StructureFrame, StructureNode, StructureTone } from './structure-types.ts';
 import {
   BAND,
   DESIGN_W,
@@ -202,10 +202,169 @@ function drawMarker(
   });
 }
 
+function chartInk(pal: Palette, color: ChartSeries['color']): string {
+  if (color === 'coral') return pal.coral;
+  if (color === 'violet') return pal.violet;
+  if (color === 'ink') return pal.ink;
+  if (color === 'muted') return inkTone(pal, 0.55);
+  return pal.accent;
+}
+
+/**
+ * The growth chart: a fixed grid and axis, one polyline per measured series and
+ * a legend. Values are printed in the note line rather than beside every dot, so
+ * two curves that nearly touch can never stack their numbers on each other.
+ */
+function drawChart(ctx: SKRSContext2D, pal: Palette, chart: StructureChart, alpha: number, tMs: number): void {
+  const { axis, series, legendY } = chart;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = inkTone(pal, 0.14);
+  ctx.lineWidth = 2;
+  for (const tick of axis.yTicks) {
+    ctx.beginPath();
+    ctx.moveTo(axis.x, tick.y);
+    ctx.lineTo(axis.x + axis.w, tick.y);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = inkTone(pal, 0.42);
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(axis.x, axis.y);
+  ctx.lineTo(axis.x, axis.y + axis.h);
+  ctx.lineTo(axis.x + axis.w, axis.y + axis.h);
+  ctx.stroke();
+  ctx.restore();
+
+  for (const tick of axis.yTicks) {
+    drawText(ctx, tick.label, {
+      box: { x: axis.x - 104, y: tick.y - 17, w: 88, h: 34 },
+      role: 'mono',
+      weight: 500,
+      size: 26,
+      minSize: 18,
+      maxLines: 1,
+      align: 'right',
+      color: inkTone(pal, 0.5),
+      alpha,
+      group: 'chart-tick'
+    });
+  }
+  for (const tick of axis.xTicks) {
+    drawText(ctx, tick.label, {
+      box: { x: tick.x - 90, y: axis.y + axis.h + 26, w: 180, h: 34 },
+      role: 'mono',
+      weight: 500,
+      size: 24,
+      minSize: 18,
+      maxLines: 1,
+      align: 'center',
+      color: inkTone(pal, 0.5),
+      alpha,
+      group: 'chart-tick'
+    });
+  }
+
+  // The legend row doubles as the colour key: dot first, then the class name.
+  const lane = axis.w / Math.max(1, series.length);
+  series.forEach((item, index) => {
+    const left = axis.x + lane * index;
+    const ink = chartInk(pal, item.color);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.arc(left + 6, legendY, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    drawText(ctx, item.label, {
+      box: { x: left + 22, y: legendY - 17, w: lane - 26, h: 34 },
+      role: 'mono',
+      weight: 600,
+      size: 19,
+      minSize: 13,
+      maxLines: 1,
+      align: 'left',
+      color: inkTone(pal, 0.72),
+      alpha,
+      group: 'chart-legend'
+    });
+  });
+
+  // The guide marks the input size the playhead is measuring.
+  const current = series.find((item) => item.points.length > 0)?.points.slice(-1)[0];
+  if (current) {
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.4;
+    ctx.strokeStyle = inkTone(pal, 0.4);
+    ctx.lineWidth = 2;
+    ctx.setLineDash([12, 12]);
+    ctx.beginPath();
+    ctx.moveTo(current.x, axis.y);
+    ctx.lineTo(current.x, axis.y + axis.h);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  series.forEach((item) => {
+    const ink = chartInk(pal, item.color);
+    if (item.points.length === 0) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    item.points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.stroke();
+    ctx.restore();
+
+    item.points.forEach((point, index) => {
+      const live = index === item.points.length - 1;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = live ? ink : inkTone(pal, 0.28);
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, live ? 11 : 6.5, 0, Math.PI * 2);
+      ctx.fill();
+      if (live) {
+        ctx.globalAlpha = alpha * (0.5 + 0.22 * Math.sin(tMs / 320));
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 20, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  });
+}
+
 /** Draws one frame, animating arrivals, departures and the active node. */
 function drawFrame(ctx: SKRSContext2D, pal: Palette, state: StructureState, alpha: number, tMs: number): void {
   const frame = state.frame;
   if (!frame || alpha <= 0.02) return;
+
+  if (frame.chart) {
+    drawChart(ctx, pal, frame.chart, alpha, tMs);
+    if (frame.note) {
+      drawChip(ctx, 0, frame.chart.axis.y + frame.chart.axis.h + 108, frame.note, {
+        size: 22,
+        color: pal.accent,
+        pal,
+        align: 'center',
+        alpha: alpha * 0.95,
+        maxWidth: DESIGN_W - SAFE * 2,
+        group: 'structure-note'
+      });
+    }
+    return;
+  }
 
   const current = new Map(frame.nodes.map((node) => [node.id, node]));
   const before = new Map((state.previous?.nodes ?? []).map((node) => [node.id, node]));

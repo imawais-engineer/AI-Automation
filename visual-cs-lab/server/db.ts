@@ -446,6 +446,35 @@ const DP_ANIMATION = {
   expect: { result: 21 }
 };
 
+/** Growth curves: every point is counted by the implementation, then checked. */
+const BIG_O_ANIMATION = {
+  kind: 'complexity',
+  series: ['constant', 'log', 'linear', 'n-log-n', 'quadratic'],
+  sizes: [4, 8, 16, 32],
+  expect: { series: ['constant', 'log', 'linear', 'n-log-n', 'quadratic'] }
+};
+
+const TIME_COMPLEXITY_ANIMATION = {
+  kind: 'complexity',
+  series: ['log', 'linear'],
+  sizes: [8, 16, 32, 64],
+  expect: { series: ['log', 'linear'] }
+};
+
+const SPACE_COMPLEXITY_ANIMATION = {
+  kind: 'complexity',
+  series: ['recursion-space', 'iterative-space'],
+  sizes: [4, 8, 16, 32],
+  expect: { series: ['recursion-space', 'iterative-space'] }
+};
+
+const BEST_AVERAGE_WORST_ANIMATION = {
+  kind: 'complexity',
+  series: ['best', 'average', 'worst'],
+  sizes: [4, 8, 16, 32],
+  expect: { series: ['best', 'average', 'worst'] }
+};
+
 const BST_ANIMATION = {
   kind: 'bst',
   insert: [8, 3, 10, 1, 6, 14],
@@ -1235,7 +1264,11 @@ function ensureStructureDemos(): void {
     'breadth-first-search': BFS_ANIMATION,
     'depth-first-search': DFS_ANIMATION,
     recursion: RECURSION_ANIMATION,
-    'dynamic-programming': DP_ANIMATION
+    'dynamic-programming': DP_ANIMATION,
+    'big-o-notation': BIG_O_ANIMATION,
+    'time-complexity': TIME_COMPLEXITY_ANIMATION,
+    'space-complexity': SPACE_COMPLEXITY_ANIMATION,
+    'best-average-worst-case': BEST_AVERAGE_WORST_ANIMATION
   };
 
   for (const [slug, config] of Object.entries(configs)) {

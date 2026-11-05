@@ -10,6 +10,7 @@
 
 import type { BstTrace } from '../algorithms/binary-search-trees.ts';
 import type { BubbleTrace } from '../algorithms/bubble-sort.ts';
+import type { ComplexityTrace } from '../algorithms/complexity.ts';
 import type { DpTrace } from '../algorithms/dynamic-programming.ts';
 import type { DfsTrace } from '../algorithms/graph-dfs.ts';
 import type { GraphTrace } from '../algorithms/graphs.ts';
@@ -22,7 +23,14 @@ import type { QueueTrace } from '../algorithms/queues.ts';
 import type { QuickTrace } from '../algorithms/quick-sort.ts';
 import type { RecursionTrace } from '../algorithms/recursion.ts';
 import type { TreeTrace } from '../algorithms/trees.ts';
-import type { StructureEdge, StructureFrame, StructureLabel, StructureNode } from './structure-types.ts';
+import type {
+  ChartAxis,
+  ChartSeries,
+  StructureEdge,
+  StructureFrame,
+  StructureLabel,
+  StructureNode
+} from './structure-types.ts';
 
 function values(items: (number | string)[]): string {
   return items.length === 0 ? 'empty' : `[${items.join(', ')}]`;
@@ -680,6 +688,64 @@ export function dpFrames(trace: DpTrace): StructureFrame[] {
         step.operands === null
           ? `base case · ${step.filled} of ${trace.n + 1} states solved`
           : `${step.operands[0]} + ${step.operands[1]} = ${step.value} · ${step.filled} of ${trace.n + 1} states solved`
+    };
+  });
+}
+
+/* --------------------------------------------------------------- complexity */
+
+const CHART = { left: -352, right: 424, top: -286, bottom: 196 };
+const CHART_COLORS: ChartSeries['color'][] = ['accent', 'coral', 'violet', 'ink', 'muted'];
+
+/**
+ * The growth chart: one polyline per measured series, revealed one input size at
+ * a time. The y scale is fixed for the whole run from the largest count on the
+ * chart, so a curve can never appear to flatten because the axis rescaled under
+ * it — the shape on screen is the shape of the measurements.
+ */
+export function complexityFrames(trace: ComplexityTrace): StructureFrame[] {
+  const axis: ChartAxis = {
+    x: CHART.left,
+    y: CHART.top,
+    w: CHART.right - CHART.left,
+    h: CHART.bottom - CHART.top,
+    xTicks: trace.sizes.map((size, index) => ({
+      x: CHART.left + (trace.sizes.length === 1 ? 0 : (index / (trace.sizes.length - 1)) * (CHART.right - CHART.left)),
+      label: `n=${size}`
+    })),
+    yTicks: [0, 0.5, 1].map((fraction) => ({
+      y: CHART.bottom - fraction * (CHART.bottom - CHART.top),
+      label: String(Math.round(trace.peak * fraction))
+    }))
+  };
+
+  const xAt = (size: number) => {
+    const index = trace.sizes.indexOf(size);
+    if (trace.sizes.length === 1) return CHART.left;
+    return CHART.left + (index / (trace.sizes.length - 1)) * (CHART.right - CHART.left);
+  };
+  const yAt = (ops: number) => CHART.bottom - (ops / Math.max(1, trace.peak)) * (CHART.bottom - CHART.top);
+
+  return trace.steps.map((step, stepIndex) => {
+    const series: ChartSeries[] = trace.series.map((item, seriesIndex) => ({
+      id: item.id,
+      label: item.label,
+      color: CHART_COLORS[seriesIndex % CHART_COLORS.length],
+      points: item.points.slice(0, stepIndex + 1).map((point) => ({ x: xAt(point.size), y: yAt(point.ops) })),
+      highlight: stepIndex,
+      value: String(item.points[stepIndex]?.ops ?? 0)
+    }));
+
+    return {
+      nodes: [],
+      edges: [],
+      markers: [],
+      labels: [],
+      chart: { axis, series, legendY: CHART.top - 58 },
+      // One line: the size, then what each measured class actually did there.
+      note: `n = ${step.n} · ${trace.series
+        .map((item) => `${item.label} ${item.points[stepIndex]?.ops ?? 0}`)
+        .join(' · ')}`
     };
   });
 }

@@ -93,6 +93,13 @@ import {
   type BubbleStep
 } from './algorithms/bubble-sort.ts';
 import {
+  isComplexityConfig,
+  traceComplexity,
+  validateComplexityTrace,
+  type ComplexityConfig,
+  type ComplexityStep
+} from './algorithms/complexity.ts';
+import {
   isInsertionSortConfig,
   traceInsertionSort,
   validateInsertionSortTrace,
@@ -193,6 +200,7 @@ export type StructureVisual = {
     | DfsStep
     | RecursionStep
     | DpStep
+    | ComplexityStep
   )[];
 };
 
@@ -374,6 +382,37 @@ export function runConcept(concept: ConceptInput): ConceptRun {
       comparisons: trace.comparisons,
       complexity: trace.complexity,
       errors: trace.errors,
+      validation,
+      eventCount: trace.steps.length
+    };
+  }
+
+  if (isComplexityConfig(config)) {
+    const complexityConfig = config as ComplexityConfig;
+    const trace = traceComplexity(complexityConfig);
+    const validation = validateComplexityTrace(trace, complexityConfig.expect);
+    const largest = trace.sizes[trace.sizes.length - 1] ?? 0;
+    return {
+      kind: 'structure',
+      supported: true,
+      structure: { kind: 'complexity', trace },
+      events: [],
+      steps: [],
+      linkedSteps: [],
+      arraySteps: [],
+      total: 0,
+      foundIndex: null,
+      summary: `measures ${trace.series.length} growth curve${trace.series.length === 1 ? '' : 's'} up to n = ${largest}`,
+      input: [],
+      target: null,
+      comparisons: trace.peak,
+      complexity: {
+        time: trace.series.map((item) => item.label).join(' · '),
+        space: 'O(1) extra to plot',
+        arraySize: largest,
+        comparisons: trace.peak
+      },
+      errors: [],
       validation,
       eventCount: trace.steps.length
     };
@@ -1469,6 +1508,26 @@ function structureLessonCopy(run: StructureRun): {
       traceCaption: 'The settled tail grows by one every pass, so each pass has one less pair to compare.',
       complexityTitle: 'Quadratic comparisons',
       complexityCaption: `${bubble.comparisons} comparisons and ${bubble.swaps} swaps this run. Worst case O(n²) comparisons, O(1) extra space.`
+    };
+  }
+
+  if (run.kind === 'complexity') {
+    const trace = run.trace;
+    const largest = trace.sizes[trace.sizes.length - 1] ?? 0;
+    const names = trace.series.map((item) => item.label).join(', ');
+    return {
+      hook: 'Growth is the shape of the curve, not the stopwatch on one run.',
+      setupTitle: 'One axis is input size, the other is work done',
+      setupCaption: 'Grow the input, run the real implementation, and plot the work it did.',
+      traceTitle: `Measured · ${names} up to n = ${largest}`,
+      traceSubtitle: 'grow n · count the operations · plot the result',
+      traceCaption: 'Doubling the input doubles a linear curve, barely moves a logarithmic one and quadruples a quadratic one.',
+      complexityTitle: 'Read the curve, not one sample',
+      complexityCaption: `At n = ${largest} the slowest curve does ${Math.max(
+        ...trace.series.map((item) => item.points[item.points.length - 1]?.ops ?? 0)
+      )} and the cheapest ${Math.min(
+        ...trace.series.map((item) => item.points[item.points.length - 1]?.ops ?? 0)
+      )}. The class is what doubling n does.`
     };
   }
 

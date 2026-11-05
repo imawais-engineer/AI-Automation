@@ -49,6 +49,37 @@ export type StructureLabel = {
   size?: number;
 };
 
+/** One plotted measurement, already in design coordinates. */
+export type ChartPoint = { x: number; y: number };
+
+export type ChartSeries = {
+  id: string;
+  label: string;
+  color: 'accent' | 'coral' | 'violet' | 'ink' | 'muted';
+  points: ChartPoint[];
+  /** Index of the point the playhead is on, or -1 before the first size. */
+  highlight: number;
+  /** The measured value at the highlighted point, printed beside it. */
+  value: string;
+};
+
+export type ChartAxis = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  xTicks: { x: number; label: string }[];
+  yTicks: { y: number; label: string }[];
+};
+
+/** A growth chart frame: axes, one polyline per measured series, a legend. */
+export type StructureChart = {
+  axis: ChartAxis;
+  series: ChartSeries[];
+  /** Where the legend row sits, above the plot. */
+  legendY: number;
+};
+
 export type StructureFrame = {
   nodes: StructureNode[];
   edges: StructureEdge[];
@@ -56,6 +87,8 @@ export type StructureFrame = {
   labels: StructureLabel[];
   /** One line under the structure describing its state. */
   note?: string;
+  /** A chart instead of nodes: the growth curves of a complexity short. */
+  chart?: StructureChart;
 };
 
 /** What every verified structure step has to provide to the animation. */

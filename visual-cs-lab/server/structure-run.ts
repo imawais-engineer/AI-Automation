@@ -10,6 +10,7 @@
 
 import type { BstTrace } from './algorithms/binary-search-trees.ts';
 import type { BubbleTrace } from './algorithms/bubble-sort.ts';
+import type { ComplexityTrace } from './algorithms/complexity.ts';
 import type { DpTrace } from './algorithms/dynamic-programming.ts';
 import type { DfsTrace } from './algorithms/graph-dfs.ts';
 import type { GraphTrace } from './algorithms/graphs.ts';
@@ -25,6 +26,7 @@ import type { TreeTrace } from './algorithms/trees.ts';
 import {
   bstFrames,
   bubbleFrames,
+  complexityFrames,
   dfsFrames,
   dpFrames,
   graphFrames,
@@ -54,7 +56,8 @@ export type StructureRun =
   | { kind: 'quick-sort'; trace: QuickTrace }
   | { kind: 'graph-dfs'; trace: DfsTrace }
   | { kind: 'recursion'; trace: RecursionTrace }
-  | { kind: 'dp-table'; trace: DpTrace };
+  | { kind: 'dp-table'; trace: DpTrace }
+  | { kind: 'complexity'; trace: ComplexityTrace };
 
 export type StructureChrome = {
   label: string;
@@ -79,6 +82,7 @@ export function framesForRun(run: StructureRun): StructureFrame[] {
   if (run.kind === 'quick-sort') return quickSortFrames(run.trace);
   if (run.kind === 'graph-dfs') return dfsFrames(run.trace);
   if (run.kind === 'recursion') return recursionFrames(run.trace);
+  if (run.kind === 'complexity') return complexityFrames(run.trace);
   return dpFrames(run.trace);
 }
 
@@ -334,6 +338,35 @@ export function structureChrome(run: StructureRun): StructureChrome {
         sub: `[${bubble.sorted.join(', ')}] · ${plural(bubble.swaps, 'swap')}`
       },
       holdCaption: 'Each pass settles one more value at the end, so the next pass has one less to compare.'
+    };
+  }
+
+  if (run.kind === 'complexity') {
+    const trace = run.trace;
+    const largest = trace.sizes[trace.sizes.length - 1] ?? 0;
+    const atLargest = trace.series.map((item) => ({
+      label: item.label,
+      ops: item.points[item.points.length - 1]?.ops ?? 0
+    }));
+    const fastest = atLargest.reduce((top, item) => (item.ops > top.ops ? item : top), atLargest[0]);
+    const slowest = atLargest.reduce((low, item) => (item.ops < low.ops ? item : low), atLargest[0]);
+    const unitOf = (count: number) =>
+      trace.unit === 'operations'
+        ? plural(count, 'operation')
+        : `${count} frame${count === 1 ? '' : 's'} held`;
+    return {
+      label: 'GROWTH',
+      kickers: [`${trace.series.length} MEASURED CURVE${trace.series.length === 1 ? '' : 'S'}`, 'x = INPUT SIZE · y = WORK DONE'],
+      facts: [
+        { label: `Measured at n = ${largest}`, value: atLargest.map((item) => `${item.label} ${item.ops}`).join(' · ') },
+        { label: 'Grows fastest here', value: `${fastest.label} — ${unitOf(fastest.ops)}` },
+        { label: 'Grows slowest here', value: `${slowest.label} — ${unitOf(slowest.ops)}` }
+      ],
+      result: {
+        title: `n = ${largest}`,
+        sub: atLargest.map((item) => `${item.label} ${item.ops}`).join(' · ')
+      },
+      holdCaption: 'Every point on this chart is counted by the real implementation, not estimated.'
     };
   }
 
