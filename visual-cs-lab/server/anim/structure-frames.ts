@@ -758,7 +758,7 @@ const STEPS_ROW_GAP = 152;
 const STEPS_CELL_MAX = 108;
 const STEPS_CELL_MIN = 58;
 const STEPS_CELL_GAP = 14;
-const STEPS_ROW_MAX = 880;
+const STEPS_ROW_MAX = 680;
 const STEPS_TOP = -70;
 
 /**

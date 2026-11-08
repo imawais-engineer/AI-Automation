@@ -20,6 +20,30 @@ import {
   validateStringsTrace,
   type StringsConfig
 } from './strings.ts';
+import {
+  isPrefixSumsConfig,
+  tracePrefixSums,
+  validatePrefixSumsTrace,
+  type PrefixSumsConfig
+} from './prefix-sums.ts';
+import {
+  isSelectionSortConfig,
+  traceSelectionSort,
+  validateSelectionTrace,
+  type SelectionSortConfig
+} from './selection-sort.ts';
+import {
+  isSlidingWindowConfig,
+  traceSlidingWindow,
+  validateSlidingWindowTrace,
+  type SlidingWindowConfig
+} from './sliding-window.ts';
+import {
+  isTwoPointersConfig,
+  traceTwoPointers,
+  validateTwoPointersTrace,
+  type TwoPointersConfig
+} from './two-pointers.ts';
 
 /** One line of cells: the subject row, a shadow row, a bucket row. */
 export type StepsRow = {
@@ -127,6 +151,38 @@ const BUILDERS: Builder[] = [
       const strings = config as unknown as StringsConfig;
       const trace = traceStrings(strings);
       return { trace, validation: validateStringsTrace(trace, strings.expect) };
+    }
+  },
+  {
+    matches: (config) => isTwoPointersConfig(config),
+    build: (config) => {
+      const pointers = config as unknown as TwoPointersConfig;
+      const trace = traceTwoPointers(pointers);
+      return { trace, validation: validateTwoPointersTrace(trace, pointers) };
+    }
+  },
+  {
+    matches: (config) => isSlidingWindowConfig(config),
+    build: (config) => {
+      const window = config as unknown as SlidingWindowConfig;
+      const trace = traceSlidingWindow(window);
+      return { trace, validation: validateSlidingWindowTrace(trace, window) };
+    }
+  },
+  {
+    matches: (config) => isPrefixSumsConfig(config),
+    build: (config) => {
+      const prefix = config as unknown as PrefixSumsConfig;
+      const trace = tracePrefixSums(prefix);
+      return { trace, validation: validatePrefixSumsTrace(trace, prefix) };
+    }
+  },
+  {
+    matches: (config) => isSelectionSortConfig(config),
+    build: (config) => {
+      const selection = config as unknown as SelectionSortConfig;
+      const trace = traceSelectionSort(selection);
+      return { trace, validation: validateSelectionTrace(trace, selection) };
     }
   }
 ];
