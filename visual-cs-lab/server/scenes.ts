@@ -15,6 +15,7 @@ import {
   type ArrayConfig,
   type ArrayStep
 } from './algorithms/arrays.ts';
+import { buildStepsRun, isStepsConfig } from './algorithms/steps.ts';
 import {
   isLinkedListConfig,
   traceLinkedList,
@@ -416,6 +417,38 @@ export function runConcept(concept: ConceptInput): ConceptRun {
       validation,
       eventCount: trace.steps.length
     };
+  }
+
+  if (isStepsConfig(config)) {
+    const built = buildStepsRun(config);
+    if (built) {
+      const trace = built.trace;
+      const cells = trace.steps[0]?.rows[0]?.cells.length ?? 0;
+      return {
+        kind: 'structure',
+        supported: true,
+        structure: { kind: 'steps', trace },
+        events: [],
+        steps: [],
+        linkedSteps: [],
+        arraySteps: [],
+        total: 0,
+        foundIndex: null,
+        summary: `${trace.steps.length} verified steps · ${trace.meta.result.title}`,
+        input: [],
+        target: null,
+        comparisons: trace.steps.length,
+        complexity: {
+          time: trace.meta.complexity.time,
+          space: trace.meta.complexity.space,
+          arraySize: cells,
+          comparisons: trace.steps.length
+        },
+        errors: [],
+        validation: built.validation,
+        eventCount: trace.steps.length
+      };
+    }
   }
 
   if (isQueueConfig(config)) {
@@ -1326,6 +1359,8 @@ function structureLessonCopy(run: StructureRun): {
   complexityTitle: string;
   complexityCaption: string;
 } {
+  if (run.kind === 'steps') return run.trace.meta.copy;
+
   if (run.kind === 'queue') {
     const trace = run.trace;
     const peak = trace.steps.reduce((max, step) => Math.max(max, step.items.length), 0);

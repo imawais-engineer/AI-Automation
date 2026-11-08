@@ -22,6 +22,7 @@ import type { MergeTrace } from './algorithms/merge-sort.ts';
 import type { QueueTrace } from './algorithms/queues.ts';
 import type { QuickTrace } from './algorithms/quick-sort.ts';
 import type { RecursionTrace } from './algorithms/recursion.ts';
+import type { StepsTrace } from './algorithms/steps.ts';
 import type { TreeTrace } from './algorithms/trees.ts';
 import {
   bstFrames,
@@ -38,6 +39,7 @@ import {
   queueFrames,
   quickSortFrames,
   recursionFrames,
+  stepsFrames,
   treeFrames
 } from './anim/structure-frames.ts';
 import type { StructureFrame } from './anim/structure-types.ts';
@@ -57,6 +59,7 @@ export type StructureRun =
   | { kind: 'graph-dfs'; trace: DfsTrace }
   | { kind: 'recursion'; trace: RecursionTrace }
   | { kind: 'dp-table'; trace: DpTrace }
+  | { kind: 'steps'; trace: StepsTrace }
   | { kind: 'complexity'; trace: ComplexityTrace };
 
 export type StructureChrome = {
@@ -82,6 +85,7 @@ export function framesForRun(run: StructureRun): StructureFrame[] {
   if (run.kind === 'quick-sort') return quickSortFrames(run.trace);
   if (run.kind === 'graph-dfs') return dfsFrames(run.trace);
   if (run.kind === 'recursion') return recursionFrames(run.trace);
+  if (run.kind === 'steps') return stepsFrames(run.trace);
   if (run.kind === 'complexity') return complexityFrames(run.trace);
   return dpFrames(run.trace);
 }
@@ -92,6 +96,17 @@ function plural(count: number, noun: string): string {
 
 /** The copy that frames a structure short: labels, kickers, facts, result. */
 export function structureChrome(run: StructureRun): StructureChrome {
+  if (run.kind === 'steps') {
+    const { meta } = run.trace;
+    return {
+      label: meta.label,
+      kickers: meta.kickers,
+      facts: meta.facts,
+      result: meta.result,
+      holdCaption: meta.holdCaption
+    };
+  }
+
   if (run.kind === 'queue') {
     const trace = run.trace;
     const peak = trace.steps.reduce((max, step) => Math.max(max, step.items.length), 0);

@@ -29,8 +29,10 @@ import type {
   StructureEdge,
   StructureFrame,
   StructureLabel,
+  StructureMarker,
   StructureNode
 } from './structure-types.ts';
+import type { StepsTrace } from '../algorithms/steps.ts';
 
 function values(items: (number | string)[]): string {
   return items.length === 0 ? 'empty' : `[${items.join(', ')}]`;
@@ -747,5 +749,76 @@ export function complexityFrames(trace: ComplexityTrace): StructureFrame[] {
         .map((item) => `${item.label} ${item.points[stepIndex]?.ops ?? 0}`)
         .join(' · ')}`
     };
+  });
+}
+
+/* ------------------------------------------------------------------- steps */
+
+const STEPS_ROW_GAP = 152;
+const STEPS_CELL_MAX = 108;
+const STEPS_CELL_MIN = 58;
+const STEPS_CELL_GAP = 14;
+const STEPS_ROW_MAX = 880;
+const STEPS_TOP = -70;
+
+/**
+ * Cell rows for the pattern shorts: characters, pointer pairs, running totals,
+ * bit masks. Every row is centred on its own width so a two-row lesson (values
+ * above, total below) stays aligned without the trace choosing coordinates.
+ */
+export function stepsFrames(trace: StepsTrace): StructureFrame[] {
+  const slots = trace.steps.reduce(
+    (max, step) => Math.max(max, ...step.rows.map((row) => row.cells.length)),
+    1
+  );
+  const cellW = Math.max(
+    STEPS_CELL_MIN,
+    Math.min(STEPS_CELL_MAX, (STEPS_ROW_MAX - (slots - 1) * STEPS_CELL_GAP) / slots)
+  );
+
+  return trace.steps.map((step) => {
+    const nodes: StructureNode[] = [];
+    const labels: StructureLabel[] = [];
+    const markers: StructureMarker[] = [];
+
+    step.rows.forEach((row, rowIndex) => {
+      const y = STEPS_TOP + rowIndex * STEPS_ROW_GAP;
+      const width = row.cells.length * cellW + Math.max(0, row.cells.length - 1) * STEPS_CELL_GAP;
+      if (row.label) {
+        labels.push({
+          text: row.label,
+          x: -452,
+          y: y + 10,
+          align: 'left',
+          size: 30
+        });
+      }
+      row.cells.forEach((cell, cellIndex) => {
+        const x = -width / 2 + cellW / 2 + cellIndex * (cellW + STEPS_CELL_GAP);
+        nodes.push({
+          id: `r${rowIndex}c${cellIndex}`,
+          value: cell,
+          x,
+          y,
+          w: cellW,
+          h: 94,
+          tone: row.active?.includes(cellIndex) ? 'active' : row.done?.includes(cellIndex) ? 'done' : 'normal'
+        });
+      });
+    });
+
+    for (const pointer of step.pointers || []) {
+      const rowIndex = pointer.row ?? 0;
+      const row = step.rows[rowIndex];
+      if (!row || pointer.index < 0 || pointer.index >= row.cells.length) continue;
+      markers.push({
+        node: `r${rowIndex}c${pointer.index}`,
+        label: pointer.label,
+        tone: pointer.tone ?? 'accent',
+        place: pointer.place ?? 'above'
+      });
+    }
+
+    return { nodes, edges: [], markers, labels, note: step.message };
   });
 }

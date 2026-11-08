@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 
 import { buildScenes, runConcept, type ConceptInput, type LessonInput } from './scenes.ts';
 import { DEFAULT_QUEUE_OPS } from './algorithms/queues.ts';
+import { PATTERN_DEMOS } from './algorithms/patterns.ts';
 import { DEFAULT_HEAP_OPS } from './algorithms/heaps.ts';
 import { DEFAULT_GRAPH_EDGES, DEFAULT_GRAPH_NODES } from './algorithms/graphs.ts';
 import { DEFAULT_TREE_NODES } from './algorithms/trees.ts';
@@ -1331,6 +1332,99 @@ function ensureStructureDemos(): void {
   }
 }
 
+/**
+ * Ensures the pattern and paradigm shorts exist: one concept with its verified
+ * config, one 45 second lesson and a storyboard built from that trace. Runs on
+ * every boot so a database created before a lesson existed picks it up, and it
+ * only writes what is missing — a storyboard a person has re-timed is left alone.
+ */
+function ensurePatternDemos(): void {
+  const branding = brandingFrom(readBrand());
+
+  for (const demo of PATTERN_DEMOS) {
+    const { concept, config, lesson } = demo;
+    let row = db.prepare('SELECT id, animation_config FROM concepts WHERE slug = ?').get(concept.slug) as
+      | { id: string; animation_config: string }
+      | undefined;
+
+    if (!row) {
+      const id = newId();
+      const stamp = nowIso();
+      db.prepare(
+        `INSERT INTO concepts (id, slug, name, category, summary, objectives, prerequisites,
+           plain_explanation, technical_explanation, pseudocode, reference_language, reference_code,
+           complexity_time, complexity_space, example_input, expected_output, animation_config,
+           related, status, archived, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, 'published', 0, ?, ?)`
+      ).run(
+        id,
+        concept.slug,
+        concept.name,
+        concept.category,
+        concept.summary,
+        concept.objectives,
+        concept.prerequisites,
+        concept.plain,
+        concept.technical,
+        concept.pseudocode,
+        concept.time,
+        concept.space,
+        concept.exampleInput,
+        concept.expectedOutput,
+        JSON.stringify(config),
+        JSON.stringify(concept.related),
+        stamp,
+        stamp
+      );
+      row = { id, animation_config: JSON.stringify(config) };
+    }
+
+    const current = safeParse(row.animation_config);
+    if (!current || current.kind !== config.kind) {
+      db.prepare('UPDATE concepts SET animation_config = ?, updated_at = ? WHERE id = ?').run(
+        JSON.stringify(config),
+        nowIso(),
+        row.id
+      );
+    }
+
+    ensureDemoLesson(row.id, lesson);
+
+    const conceptRow = db.prepare('SELECT * FROM concepts WHERE id = ?').get(row.id) as ConceptInput | undefined;
+    const run = conceptRow ? runConcept(conceptRow) : null;
+    if (!conceptRow || !run?.supported) continue;
+
+    const lessons = db.prepare('SELECT * FROM lessons WHERE concept_id = ?').all(row.id) as (LessonInput & {
+      scenes: string;
+    })[];
+
+    for (const lessonRow of lessons) {
+      const stored = safeParse(lessonRow.scenes);
+      const scenes = Array.isArray(stored) ? (stored as { type?: string; id?: string }[]) : [];
+      if (scenes.some((scene) => String(scene.id || '').includes('-copy-'))) continue;
+
+      const traceBeats = scenes.filter((scene) => scene.type === 'trace');
+      const emptyTrace = traceBeats.some((scene) => {
+        const steps = (scene as { visual?: { steps?: unknown[] } }).visual?.steps;
+        return !Array.isArray(steps) || steps.length === 0;
+      });
+      const outdated =
+        scenes.length === 0 || !scenes.some((scene) => scene.type === 'open') || traceBeats.length !== 1 || emptyTrace;
+      if (!outdated) continue;
+
+      const seconds = Number(lessonRow.duration_seconds) < 30 ? DEMO_SECONDS : Number(lessonRow.duration_seconds);
+      const refreshed: LessonInput = { ...lessonRow, duration_seconds: seconds };
+      const built = buildScenes(refreshed, conceptRow, branding);
+      db.prepare('UPDATE lessons SET duration_seconds = ?, scenes = ?, updated_at = ? WHERE id = ?').run(
+        seconds,
+        JSON.stringify(built),
+        nowIso(),
+        lessonRow.id
+      );
+    }
+  }
+}
+
 function safeParse(raw: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(raw || '');
@@ -1342,6 +1436,7 @@ function safeParse(raw: string): Record<string, unknown> | null {
 
 ensureMotionDemos();
 ensureStructureDemos();
+ensurePatternDemos();
 
 // The learning-content model (lessons, slides, assets, progress, roles) is
 // additive and runs once; existing concepts, lessons and renders are migrated.
