@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { api, type RenderJob, type RenderValidation, type Pipeline } from '../api';
+import { api, type RenderFailure, type RenderJob, type RenderValidation, type Pipeline } from '../api';
 import RenderQuality from '../components/RenderQuality';
 import Collapsible from '../components/Collapsible';
 import VideoCaptions from '../components/VideoCaptions';
@@ -45,11 +45,13 @@ export default function Renders() {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<'overview' | 'captions'>('overview');
+  const [failures, setFailures] = useState<RenderFailure[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const data = await api<{ renders: RenderJob[] }>('/api/renders');
+      const data = await api<{ renders: RenderJob[]; failures?: RenderFailure[] }>('/api/renders');
       setJobs(data.renders);
+      if (data.failures?.length) setFailures(data.failures);
       setError('');
     } catch (err) {
       setError((err as Error).message);
@@ -101,6 +103,22 @@ export default function Renders() {
       </header>
 
       {error && <div className="notice bad">{error}</div>}
+
+      {failures.length > 0 && (
+        <div className="notice bad">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <strong>Failed generations are not saved</strong>
+            <button className="btn ghost" onClick={() => setFailures([])}>
+              Dismiss
+            </button>
+          </div>
+          {failures.map((failure) => (
+            <p key={`${failure.lessonId}-${failure.at}`} style={{ margin: '6px 0 0', fontSize: 12.5 }}>
+              <strong>{failure.lessonTitle}</strong> · {failure.error}
+            </p>
+          ))}
+        </div>
+      )}
 
       <div className="card">
         {jobs.length === 0 ? (

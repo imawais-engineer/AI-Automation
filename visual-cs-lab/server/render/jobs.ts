@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { open, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
@@ -136,6 +136,37 @@ export function createJob(lessonId: string, preset: Preset): { job?: RenderJob; 
 
   pump();
   return { job: jobById(id) };
+}
+
+export type RenderFailure = { lessonId: string; lessonTitle: string; error: string; at: string };
+
+/**
+ * Failed renders are not kept. The reason lives only in memory until the Studio
+ * reads it once, so Created videos holds real renders and nothing else.
+ */
+const failures: RenderFailure[] = [];
+
+/** Hands the failures over once: nothing failed is stored, so this is the only record. */
+export function recentFailures(): RenderFailure[] {
+  return failures.splice(0, failures.length);
+}
+
+function recordFailure(job: RenderJob, error: string): void {
+  const bundle = lessonBundle(job.lesson_id);
+  failures.unshift({
+    lessonId: job.lesson_id,
+    lessonTitle: bundle?.lesson.title || job.lesson_id,
+    error,
+    at: nowIso()
+  });
+  failures.splice(5);
+}
+
+/** Drops the job row and any partial file: a failed generation is never stored. */
+async function failJob(job: RenderJob, error: string): Promise<void> {
+  recordFailure(job, error);
+  await unlink(path.join(MEDIA_DIR, `${job.id}.mp4`)).catch(() => undefined);
+  db.prepare('DELETE FROM render_jobs WHERE id = ?').run(job.id);
 }
 
 export function retryJob(id: string): { job?: RenderJob; error?: string } {
@@ -537,7 +568,7 @@ async function renderJob(job: RenderJob): Promise<void> {
 
   const bundle = lessonBundle(job.lesson_id);
   if (!bundle) {
-    setState(job.id, 'error', { error: 'The lesson was deleted before rendering.', finished_at: nowIso() });
+    await failJob(job, 'The lesson was deleted before rendering.');
     return;
   }
 
@@ -549,10 +580,7 @@ async function renderJob(job: RenderJob): Promise<void> {
   const scenes = safeJson<Scene[]>(job.snapshot || '', []);
   const stored = scenesFor(job.lesson_id) || [];
   if (scenes.length === 0) {
-    setState(job.id, 'error', {
-      error: 'The job has no storyboard snapshot. Start a new render.',
-      finished_at: nowIso()
-    });
+    await failJob(job, 'The job has no storyboard snapshot. Start a new render.');
     return;
   }
   const profile = PROFILES[job.preset];
@@ -567,10 +595,7 @@ async function renderJob(job: RenderJob): Promise<void> {
       brand: planBrand(brand)
     });
   } catch (error) {
-    setState(job.id, 'error', {
-      error: `The animation plan could not be built: ${(error as Error).message}`,
-      finished_at: nowIso()
-    });
+    await failJob(job, `The animation plan could not be built: ${(error as Error).message}`);
     return;
   }
   // Scene inspection runs before a single frame is encoded: text containment,
@@ -584,18 +609,7 @@ async function renderJob(job: RenderJob): Promise<void> {
     `scene inspection: ${audit.sampled} sampled moments · ${audit.checks.filter((check) => check.ok).length}/${audit.checks.length} checks passed`
   );
   if (!audit.ok) {
-    setState(job.id, 'error', {
-      error: `Scene inspection failed: ${audit.issues.join(' ')}`,
-      validation: JSON.stringify({
-        ok: false,
-        media: null,
-        checks: audit.checks,
-        humanReview: [],
-        samples: [],
-        validatedAt: nowIso()
-      }),
-      finished_at: nowIso()
-    });
+    await failJob(job, `Scene inspection failed: ${audit.issues.join(' ')}`);
     return;
   }
 
@@ -629,11 +643,12 @@ async function renderJob(job: RenderJob): Promise<void> {
     const isCancel = cancelled.has(job.id);
     cancelled.delete(job.id);
     await unlink(output).catch(() => undefined);
-    setState(job.id, isCancel ? 'cancelled' : 'error', {
-      error: isCancel ? 'Cancelled while rendering.' : `Render failed: ${result.error}`,
-      finished_at: nowIso()
-    });
-    appendLog(job.id, isCancel ? 'cancelled' : `failed after ${result.frames} frames`);
+    if (isCancel) {
+      setState(job.id, 'cancelled', { error: 'Cancelled while rendering.', finished_at: nowIso() });
+      appendLog(job.id, 'cancelled');
+    } else {
+      await failJob(job, `Render failed: ${result.error}`);
+    }
     return;
   }
 
@@ -656,15 +671,8 @@ async function renderJob(job: RenderJob): Promise<void> {
     );
     const media = validation.media;
     if (!validation.ok) {
-      setState(job.id, 'error', {
-        error: `Output validation failed: ${failed.map((check) => `${check.label} (${check.detail})`).join('; ')}.`,
-        output_path: output,
-        bytes: info.size,
-        duration_seconds: media?.durationSeconds ?? 0,
-        frames: result.frames,
-        validation: JSON.stringify(validation),
-        finished_at: nowIso()
-      });
+      await failJob(job, `Output validation failed: ${failed.map((check) => `${check.label} (${check.detail})`).join('; ')}.`);
+      await unlink(output).catch(() => undefined);
       return;
     }
 
@@ -690,11 +698,8 @@ async function renderJob(job: RenderJob): Promise<void> {
         : `thumbnail not generated: ${thumb.error || 'unknown reason'}`
     );
   } catch (error) {
-    setState(job.id, 'error', {
-      error: `Validation failed: ${(error as Error).message}`,
-      output_path: output,
-      finished_at: nowIso()
-    });
+    await failJob(job, `Validation failed: ${(error as Error).message}`);
+    await unlink(output).catch(() => undefined);
   }
 }
 
@@ -782,9 +787,26 @@ export function scenesFor(lessonId: string): Scene[] | null {
 }
 
 export function resumeOnBoot(): void {
+  // Interrupted and already-failed jobs are dropped, never kept as history.
+  const stale = db
+    .prepare(
+      "SELECT id, output_path FROM render_jobs WHERE state IN ('rendering','encoding','validating','error')"
+    )
+    .all() as { id: string; output_path: string | null }[];
+  for (const row of stale) {
+    for (const file of [path.join(MEDIA_DIR, `${row.id}.mp4`), row.output_path]) {
+      if (file) {
+        try {
+          unlinkSync(file);
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+  }
   db.prepare(
-    "UPDATE render_jobs SET state = 'error', error = 'Interrupted by a server restart. Retry the job.', finished_at = ? WHERE state IN ('rendering','encoding','validating')"
-  ).run(nowIso());
+    "DELETE FROM render_jobs WHERE state IN ('rendering','encoding','validating','error')"
+  ).run();
   pump();
 }
 

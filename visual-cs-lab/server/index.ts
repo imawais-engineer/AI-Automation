@@ -42,6 +42,7 @@ import {
   createJob,
   lessonBundle,
   PRESETS,
+  recentFailures,
   resumeOnBoot,
   retryJob,
   sceneClip,
@@ -921,7 +922,7 @@ app.get('/api/renders', requireAction('content:read'), (req, res) => {
        ORDER BY render_jobs.created_at DESC LIMIT 40`
     )
     .all(lessonId, lessonId);
-  res.json({ renders: jobs });
+  res.json({ renders: jobs, failures: lessonId ? [] : recentFailures() });
 });
 
 /** What a cleanup would remove, so the Studio can confirm before deleting. */

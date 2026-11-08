@@ -97,6 +97,14 @@ export type RenderState =
   | 'error'
   | 'cancelled';
 
+/** A failed generation is never stored; the Studio is told why once. */
+export type RenderFailure = {
+  lessonId: string;
+  lessonTitle: string;
+  error: string;
+  at: string;
+};
+
 export type RenderJob = {
   id: string;
   lesson_id: string;
