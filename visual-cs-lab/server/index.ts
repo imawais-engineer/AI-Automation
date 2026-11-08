@@ -18,6 +18,7 @@ import { traceBinarySearch } from './algorithms/binary-search.ts';
 import {
   buildScenes,
   effectiveConcept,
+  lessonDurationMs,
   lessonIssues,
   runConcept,
   safeJson,
@@ -337,12 +338,15 @@ app.post('/api/lessons', requireAction('content:write'), (req, res) => {
   ).run(
     id,
     conceptId,
-    String(body.title || `${concept.name} in ${brand.default_duration} seconds`),
+    String(body.title || concept.name),
     concept.objectives,
-    Number(brand.default_duration) || 20,
+    0,
     stamp,
     stamp
   );
+  const created = requireLesson(id)!;
+  const seconds = Math.round(lessonDurationMs(created, concept, brandingFrom(brand)) / 1000);
+  db.prepare('UPDATE lessons SET duration_seconds = ?, updated_at = ? WHERE id = ?').run(seconds, nowIso(), id);
   res.status(201).json({ lesson: requireLesson(id) });
 });
 
@@ -377,10 +381,6 @@ app.patch('/api/lessons/:id', requireAction('content:write'), (req, res) => {
   const lesson = requireLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
   const patch = pick(req.body as Record<string, unknown>, LESSON_FIELDS);
-  if ('duration_seconds' in patch) {
-    const seconds = Number(patch.duration_seconds);
-    patch.duration_seconds = Math.max(10, Math.min(60, Number.isFinite(seconds) ? seconds : 20));
-  }
   const entries = Object.entries(patch);
   if (entries.length === 0) return res.status(400).json({ error: 'Nothing to update.' });
   db.prepare(
@@ -789,7 +789,6 @@ app.post('/api/create', requireAction('content:write'), (req, res) => {
   const concept = conceptBySlug(spec.slug);
   if (!concept) return res.status(404).json({ error: 'That algorithm has no concept record yet.' });
 
-  const seconds = Math.max(10, Math.min(60, Number(body.duration) || Number(readBrand().default_duration) || 45));
   let animationInput: Record<string, unknown>;
   let summary = '';
 
@@ -847,11 +846,31 @@ app.post('/api/create', requireAction('content:write'), (req, res) => {
 
   const id = newId();
   const stamp = nowIso();
+  // The video is as long as its beat script and verified trace need — the length
+  // is measured from the content, never requested as a fixed slot.
+  const draft: LessonInput = {
+    id,
+    concept_id: concept.id,
+    title: '',
+    audience: '',
+    objective: concept.objectives,
+    duration_seconds: 0,
+    hook: String(body.hook || concept.summary),
+    narration: concept.plain_explanation,
+    on_screen_text: concept.example_input,
+    key_takeaway: concept.expected_output || concept.summary,
+    cta: "Understand the algorithm. Don't just memorize it.",
+    sources: '',
+    scenes: '[]'
+  };
+  const scenes = buildScenes(draft, concept, readBranding());
+  const seconds = Math.round(scenes.reduce((sum, scene) => sum + scene.durationMs, 0) / 1000);
+
   db.prepare(
     `INSERT INTO lessons (id, concept_id, title, audience, objective, duration_seconds, hook,
        narration, on_screen_text, key_takeaway, cta, sources, review_status, scenes, animation_input,
        created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'draft', '[]', ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'draft', ?, ?, ?, ?)`
   ).run(
     id,
     concept.id,
@@ -859,22 +878,15 @@ app.post('/api/create', requireAction('content:write'), (req, res) => {
     '',
     concept.objectives,
     seconds,
-    String(body.hook || concept.summary),
-    concept.plain_explanation,
-    concept.example_input,
-    concept.expected_output || concept.summary,
-    "Understand the algorithm. Don't just memorize it.",
+    draft.hook,
+    draft.narration,
+    draft.on_screen_text,
+    draft.key_takeaway,
+    draft.cta,
+    JSON.stringify(scenes),
     JSON.stringify(animationInput),
     stamp,
     stamp
-  );
-
-  const lesson = requireLesson(id)!;
-  const scenes = buildScenes(lesson, concept, readBranding());
-  db.prepare('UPDATE lessons SET scenes = ?, updated_at = ? WHERE id = ?').run(
-    JSON.stringify(scenes),
-    nowIso(),
-    id
   );
 
   const stored = requireLesson(id)!;
@@ -991,7 +1003,8 @@ function publishCopyInput(lessonId: string): PublishCopyInput | null {
     time: bundle.concept.complexity_time,
     space: bundle.concept.complexity_space,
     category: String((bundle.concept as unknown as { category?: string }).category || ''),
-    slug: String((bundle.lesson as unknown as { slug?: string }).slug || '')
+    slug: String((bundle.lesson as unknown as { slug?: string }).slug || ''),
+    seconds: Math.round(lessonDurationMs(bundle.lesson, bundle.concept, readBranding()) / 1000)
   };
 }
 

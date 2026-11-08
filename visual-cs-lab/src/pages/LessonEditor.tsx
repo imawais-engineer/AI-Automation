@@ -29,7 +29,6 @@ type Detail = {
   pipeline: Pipeline;
 };
 
-const DURATIONS = [10, 20, 30, 45, 60];
 const PRESETS: { key: 'preview' | 'hd' | 'long' | '4k'; label: string; note: string }[] = [
   { key: 'preview', label: 'Preview', note: '540×960 · 30 fps · fast iteration' },
   { key: 'hd', label: 'HD', note: '1080×1920 · 30 fps · default publication output' },
@@ -366,27 +365,17 @@ export default function LessonEditor() {
           </div>
 
           <div className="field">
-            <label>Video duration</label>
-            <div className="chips">
-              {DURATIONS.map((seconds) => (
-                <button
-                  key={seconds}
-                  className={`chip ${Number(draft.duration_seconds) === seconds ? 'on' : ''}`}
-                  onClick={() => setDraft({ ...draft, duration_seconds: String(seconds) })}
-                >
-                  {seconds}s
-                </button>
-              ))}
-              <input
-                className="input"
-                style={{ width: 90 }}
-                value={draft.duration_seconds || ''}
-                onChange={(event) => setDraft({ ...draft, duration_seconds: event.target.value })}
-                aria-label="Custom duration in seconds"
-                inputMode="numeric"
-              />
+            <label>Video length</label>
+            <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+              <strong style={{ fontVariantNumeric: 'tabular-nums' }}>
+                {Number(draft.duration_seconds || 0) > 0 ? `${Number(draft.duration_seconds)}s` : 'Not built yet'}
+              </strong>
+              <span className="badge neutral">Content-based</span>
             </div>
-            <span className="hint">Custom durations are clamped to 10–60 seconds.</span>
+            <span className="hint">
+              The length comes from the lesson itself: one readable beat per verified step, plus the time the
+              script and captions take to read. Rebuild the storyboard to re-measure it.
+            </span>
           </div>
 
           {FIELDS.map((field) => (
@@ -563,7 +552,7 @@ export default function LessonEditor() {
           </div>
           <p className="hint">
             Durations and captions are stored with the storyboard and used by the renderer, so the total has
-            to match the lesson duration.
+            to match the length the content asked for.
           </p>
           <table>
             <thead>

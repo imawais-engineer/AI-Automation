@@ -391,11 +391,13 @@ export function buildBinaryPlan(args: {
   }
 
   // Inside the trace beat: the array settles, each verified comparison gets an
-  // equal share, and the closing share demonstrates the halving principle.
+  // equal share, and the closing beats demonstrate the halving principle. The
+  // settle-in and the halving demo take the fixed time their narration needs, so
+  // a verified comparison is never the part that gets squeezed.
   const span = traceEndMs - traceStartMs;
-  const introMs = Math.round(Math.min(6000, span * 0.2));
-  const halvingMs = Math.round(span * 0.24);
-  const stepsMs = span - introMs - halvingMs;
+  const introMs = Math.round(Math.min(3000, span * 0.25));
+  const halvingMs = Math.round(Math.min(5500, span * 0.35));
+  const stepsMs = Math.max(0, span - introMs - halvingMs);
   const perStep = stepsMs / Math.max(1, steps.length);
 
   const stepWindows: BinaryStepWindow[] = steps.map((step, index) => ({

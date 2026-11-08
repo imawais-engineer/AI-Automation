@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { PROFILES } from './profiles.ts';
 import { assessRender, frameDifference, frameSample, parseMediaInfo } from './quality.ts';
+import { validationSampleMoments } from './jobs.ts';
 
 const PROBE = `Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/data/media/out.mp4':
   Metadata:
@@ -180,4 +181,26 @@ test('an empty file fails before anything else is believed', () => {
   });
   assert.equal(validation.ok, false);
   assert.ok(validation.checks.filter((check) => !check.ok).length >= 5);
+});
+
+test('blank-frame samples never land on a beat fade', () => {
+  const scenes = [
+    { type: 'open', durationMs: 2500 },
+    { type: 'hook', durationMs: 5000 },
+    { type: 'concept', durationMs: 8000 },
+    { type: 'trace', durationMs: 20000 },
+    { type: 'complexity', durationMs: 6000 },
+    { type: 'brand', durationMs: 2500 }
+  ];
+  const total = scenes.reduce((sum, scene) => sum + scene.durationMs, 0) / 1000;
+  const moments = validationSampleMoments(total, JSON.stringify(scenes));
+
+  assert.ok(moments.length >= 3, `${moments.length} samples`);
+  const bounds = new Set<number>();
+  let cursor = 0;
+  for (const scene of scenes) {
+    bounds.add(cursor / 1000);
+    cursor += scene.durationMs;
+  }
+  for (const moment of moments) assert.equal(bounds.has(moment), false, `${moment}s is a beat boundary`);
 });

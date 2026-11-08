@@ -270,6 +270,9 @@ async function encodeMoment(args: {
         : []),
       '-c:v', 'libx264',
       '-preset', profile.x264,
+      // Every lesson is flat vector motion graphics: the animation tune keeps
+      // gradients and moving edges clean instead of smearing them between frames.
+      '-tune', 'animation',
       // Gradient-heavy motion graphics lose detail fast at high CRF; each profile
       // carries its own quality. The Master profile targets a high bitrate instead,
       // so the uploaded file is never the bottleneck.
@@ -479,11 +482,12 @@ async function validateOutput(
   const decodedFrames = decode.code === 0 ? lastFrameCount(decode.stdout) : 0;
 
   // Five points across the short: beginning, two middle beats (where the
-  // algorithm actually changes state) and the ending.
+  // algorithm actually changes state) and the ending — each one inside a settled
+  // beat, because a frame on a beat boundary is legitimately mid-fade to black.
   const expectedSeconds = job.expected_frames / profile.fps;
   const samples: FrameSample[] = [];
-  for (const fraction of [0.06, 0.28, 0.5, 0.74, 0.94]) {
-    const sample = await sampleFrame(output, Math.max(0, expectedSeconds * fraction), {
+  for (const at of validationSampleMoments(expectedSeconds, job.snapshot)) {
+    const sample = await sampleFrame(output, Math.max(0, at), {
       width: profile.width,
       height: profile.height
     });
@@ -500,6 +504,32 @@ async function validateOutput(
     samples,
     decodeError: decode.code === 0 ? undefined : decode.stderr.trim().slice(-200)
   });
+}
+
+/**
+ * The seconds a finished render is sampled at for the blank-frame check.
+ *
+ * The five fractions are snapped to the middle of the beat nearest to them: every
+ * beat fades in and out, so sampling a boundary would call a healthy frame blank.
+ */
+export function validationSampleMoments(seconds: number, snapshot: string): number[] {
+  const scenes = safeJson<Scene[]>(snapshot, []);
+  const fractions = [0.06, 0.28, 0.5, 0.74, 0.94];
+  if (scenes.length === 0) return fractions.map((fraction) => seconds * fraction);
+
+  let cursor = 0;
+  const settled = scenes.map((scene) => {
+    const duration = Math.max(1, Number(scene.durationMs) || 0);
+    const middle = cursor + duration * 0.5;
+    cursor += duration;
+    return middle / 1000;
+  });
+
+  const times = fractions.map((fraction) => {
+    const target = seconds * fraction;
+    return settled.reduce((best, value) => (Math.abs(value - target) < Math.abs(best - target) ? value : best), settled[0]);
+  });
+  return [...new Set(times)].sort((a, b) => a - b);
 }
 
 async function renderJob(job: RenderJob): Promise<void> {

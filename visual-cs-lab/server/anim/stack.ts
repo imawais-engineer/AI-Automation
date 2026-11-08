@@ -244,8 +244,12 @@ function complexityPanel(
 
   const x = 90 * k;
   const w = dims.width - 180 * k;
-  const y = 300 * k;
-  const h = 250 * k;
+  // A landscape frame is 1080 tall: the cost rows and the underflow example stack
+  // tightly between the header and the caption strip instead of using the portrait
+  // rhythm, which would push the example through the caption.
+  const landscape = isLandscape(dims);
+  const y = (landscape ? 180 : 300) * k;
+  const h = (landscape ? 220 : 250) * k;
 
   ctx.save();
   ctx.globalAlpha = panel * (1 - track(p, 0.5, 0.62));
@@ -315,9 +319,9 @@ function complexityPanel(
 
   // Underflow is demonstrated as an explicit, separate example.
   const insetW = (dims.width - 180 * k) * 0.94;
-  const insetH = 470 * k;
+  const insetH = (landscape ? 380 : 470) * k;
   const insetX = (dims.width - insetW) / 2;
-  const insetY = 560 * k;
+  const insetY = (landscape ? 410 : 560) * k;
   const rise = (1 - easeOutCubic(track(p, 0.52, 0.68))) * 40 * k;
 
   ctx.save();
@@ -424,7 +428,11 @@ function lifoOverlay(
   const cardW = dims.width - 180 * k;
   const cardX = 90 * k;
   const cardH = 150 * k;
-  const cardY = Math.min(dims.height - 470 * k, caption.y - 24 * k - cardH);
+  // A landscape frame has no free column beside the tower — the card takes the
+  // band under the plinth, which is the only space the stage never draws in.
+  const cardY = isLandscape(dims)
+    ? caption.y - 24 * k - cardH
+    : Math.min(dims.height - 470 * k, caption.y - 24 * k - cardH);
   const card: Rect = { x: cardX, y: cardY, w: cardW, h: cardH };
 
   ctx.save();

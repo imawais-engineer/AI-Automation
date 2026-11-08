@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { allocateDurations, buildScenes, lessonIssues, type ConceptInput, type LessonInput, type Scene } from './scenes.ts';
+import {
+  allocateDurations,
+  buildScenes,
+  lessonDurationMs,
+  lessonIssues,
+  type ConceptInput,
+  type LessonInput,
+  type Scene
+} from './scenes.ts';
 import { brandingFrom, openingCaptureMs, shortTitle } from './branding.ts';
 import { inspectPlan, verifyBranding } from './anim/inspect.ts';
 import { planFor, type PlanBrand } from './anim/index.ts';
@@ -68,21 +76,25 @@ function withScenes(lesson: LessonInput, scenes: Scene[]): LessonInput {
   return { ...lesson, scenes: JSON.stringify(scenes) };
 }
 
-test('binary search storyboard opens, teaches and closes inside exactly 45 seconds', () => {
+test('the storyboard is as long as its content needs, not a fixed 45 seconds', () => {
   const scenes = buildScenes(BINARY_LESSON, BINARY_CONCEPT);
   assert.deepEqual(
     scenes.map((scene) => scene.type),
     ['open', 'hook', 'concept', 'trace', 'complexity', 'brand']
   );
-  // The 2.5s opening and 2.5s closing are allocated first; the lesson is fitted
-  // into the 40 seconds that remain.
+  // The 2.5s opening and 2.5s closing are allocated first; the lesson body keeps
+  // the time its beats and its copy need.
   assert.equal(scenes[0].durationMs, 2500);
   assert.equal(scenes[scenes.length - 1].durationMs, 2500);
-  assert.equal(
-    scenes.reduce((sum, scene) => sum + scene.durationMs, 0),
-    45000
-  );
-  assert.equal((45000 / 1000) * 30, 1350, 'a 45 second short is exactly 1350 frames at 30 fps');
+  const total = scenes.reduce((sum, scene) => sum + scene.durationMs, 0);
+  assert.equal(total, lessonDurationMs(BINARY_LESSON, BINARY_CONCEPT));
+  assert.notEqual(total, BINARY_LESSON.duration_seconds * 1000, 'the stored slot is not the length');
+
+  // Every verified comparison keeps a beat a person can follow.
+  const trace = scenes.find((scene) => scene.type === 'trace');
+  if (!trace) throw new Error('no trace beat');
+  const perComparison = (trace.durationMs - 3000 - 5500) / 2;
+  assert.ok(perComparison >= 3000, `${Math.round(perComparison)}ms per comparison`);
 });
 
 test('the opening runs 2–3 seconds, carries the lesson title and the personal credit', () => {
@@ -107,13 +119,19 @@ test('the opening and ending durations come from the branding settings', () => {
   const scenes = buildScenes(BINARY_LESSON, BINARY_CONCEPT, branding);
   assert.equal(scenes[0].durationMs, 3000);
   assert.equal(scenes[scenes.length - 1].durationMs, 2000);
-  assert.equal(scenes.reduce((sum, scene) => sum + scene.durationMs, 0), 45000);
+  assert.equal(
+    scenes.reduce((sum, scene) => sum + scene.durationMs, 0),
+    lessonDurationMs(BINARY_LESSON, BINARY_CONCEPT, branding)
+  );
 });
 
-test('a duration too short for the opening, lesson and closing is reported', () => {
+test('a stored duration can no longer squeeze the lesson', () => {
   const short = { ...BINARY_LESSON, duration_seconds: 10 };
-  const issues = lessonIssues({ ...short, scenes: JSON.stringify(buildScenes(short, BINARY_CONCEPT)) }, BINARY_CONCEPT);
-  assert.ok(issues.some((issue) => /raise the duration to at least/i.test(issue)));
+  const scenes = buildScenes(short, BINARY_CONCEPT);
+  const total = scenes.reduce((sum, scene) => sum + scene.durationMs, 0);
+  assert.equal(total, lessonDurationMs(short, BINARY_CONCEPT));
+  assert.ok(total >= 25000, `${Math.round(total / 1000)}s of content`);
+  assert.deepEqual(lessonIssues({ ...short, scenes: JSON.stringify(scenes) }, BINARY_CONCEPT), []);
 });
 
 test('binary search storyboard carries the verified trace and the lesson copy', () => {
@@ -150,11 +168,11 @@ test('binary search storyboard carries the verified trace and the lesson copy', 
   assert.equal(brand.subtitle, 'Aspiring Forward Deployed AI Engineer');
 });
 
-test('storyboard durations scale exactly to other lesson lengths', () => {
+test('the length follows the content, not the stored number', () => {
   const scenes = buildScenes({ ...BINARY_LESSON, duration_seconds: 30 }, BINARY_CONCEPT);
   assert.equal(
     scenes.reduce((sum, scene) => sum + scene.durationMs, 0),
-    30000
+    lessonDurationMs(BINARY_LESSON, BINARY_CONCEPT)
   );
   assert.deepEqual(allocateDurations([3, 5, 27.5, 7, 2.5], 45000), [3000, 5000, 27500, 7000, 2500]);
 });
@@ -214,8 +232,9 @@ test('validation reports scene timings that no longer add up', () => {
   const scenes = buildScenes(BINARY_LESSON, BINARY_CONCEPT).map((scene, index) =>
     index === 2 ? { ...scene, durationMs: scene.durationMs + 1500 } : scene
   );
+  const needed = (lessonDurationMs(BINARY_LESSON, BINARY_CONCEPT) / 1000).toFixed(1);
   const issues = lessonIssues(withScenes(BINARY_LESSON, scenes), BINARY_CONCEPT);
-  assert.ok(issues.some((issue) => /add up to 46\.5s/.test(issue)));
+  assert.ok(issues.some((issue) => new RegExp(`but its content needs ${needed}s`).test(issue)), issues.join(' | '));
 });
 
 test('validation reports mismatched lesson and concept references', () => {
@@ -258,7 +277,7 @@ test('the stack storyboard still builds and validates', () => {
   assert.equal(scenes.filter((scene) => scene.type === 'execution').length, 4);
   assert.equal(
     scenes.reduce((sum, scene) => sum + scene.durationMs, 0),
-    45000
+    lessonDurationMs(lesson, concept)
   );
   assert.deepEqual(lessonIssues(withScenes(lesson, scenes), concept), []);
 });

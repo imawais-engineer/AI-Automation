@@ -3,7 +3,8 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 
-import { buildScenes, runConcept, type ConceptInput, type LessonInput } from './scenes.ts';
+import { buildScenes, lessonDurationMs, runConcept, type ConceptInput, type LessonInput } from './scenes.ts';
+import { retitleForDuration } from './pacing.ts';
 import { DEFAULT_QUEUE_OPS } from './algorithms/queues.ts';
 import { PATTERN_DEMOS } from './algorithms/patterns.ts';
 import { DEFAULT_HEAP_OPS } from './algorithms/heaps.ts';
@@ -1425,6 +1426,47 @@ function ensurePatternDemos(): void {
   }
 }
 
+/**
+ * Re-times every storyboard to the length its own content asks for.
+ *
+ * Storyboards written while the pipeline cut every video to a fixed slot add up
+ * to that slot; they are rebuilt once so each beat gets the time its verified
+ * step and its copy need. `duration_seconds` then records the retimed length, so
+ * a storyboard a person re-times by hand afterwards is never touched again.
+ */
+function retimeStoryboards(): void {
+  const branding = brandingFrom(readBrand());
+  const concepts = db.prepare('SELECT * FROM concepts').all() as ConceptInput[];
+
+  for (const conceptRow of concepts) {
+    const run = runConcept(conceptRow);
+    if (!run.supported) continue;
+
+    const lessons = db.prepare('SELECT * FROM lessons WHERE concept_id = ?').all(conceptRow.id) as (LessonInput & {
+      scenes: string;
+    })[];
+
+    for (const lesson of lessons) {
+      const stored = safeParse(lesson.scenes);
+      const scenes = Array.isArray(stored) ? (stored as { type?: string; id?: string }[]) : [];
+      if (scenes.length === 0) continue;
+      if (scenes.some((scene) => String(scene.id || '').includes('-copy-'))) continue;
+
+      const seconds = Math.round(lessonDurationMs(lesson, conceptRow, branding) / 1000);
+      if (Math.abs(Number(lesson.duration_seconds) - seconds) <= 1) continue;
+
+      const built = buildScenes(lesson, conceptRow, branding);
+      db.prepare('UPDATE lessons SET title = ?, duration_seconds = ?, scenes = ?, updated_at = ? WHERE id = ?').run(
+        retitleForDuration(lesson.title, seconds),
+        seconds,
+        JSON.stringify(built),
+        nowIso(),
+        lesson.id
+      );
+    }
+  }
+}
+
 function safeParse(raw: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(raw || '');
@@ -1437,6 +1479,7 @@ function safeParse(raw: string): Record<string, unknown> | null {
 ensureMotionDemos();
 ensureStructureDemos();
 ensurePatternDemos();
+retimeStoryboards();
 
 // The learning-content model (lessons, slides, assets, progress, roles) is
 // additive and runs once; existing concepts, lessons and renders are migrated.

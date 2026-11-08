@@ -45,13 +45,19 @@ test('uneven durations do not lose a frame to rounding', () => {
   );
 });
 
-test('every profile is vertical, even and 30 fps', () => {
-  for (const profile of Object.values(PROFILES)) {
+test('every profile is even, 30 fps and keeps its own composition', () => {
+  for (const [key, profile] of Object.entries(PROFILES)) {
     assert.equal(profile.width % 2, 0);
     assert.equal(profile.height % 2, 0);
     assert.equal(profile.fps, 30);
-    assert.ok(profile.height > profile.width, 'vertical 9:16 composition');
     assert.equal(evenDimension(profile.width), profile.width);
+    if (key === 'long') {
+      // The horizontal 16:9 copy is the one preset that is wider than it is tall.
+      assert.ok(profile.width > profile.height, 'landscape 16:9 composition');
+      assert.deepEqual([profile.width, profile.height], [1920, 1080]);
+      continue;
+    }
+    assert.ok(profile.height > profile.width, 'vertical 9:16 composition');
   }
   assert.deepEqual(
     [PROFILES.preview.width, PROFILES.preview.height],

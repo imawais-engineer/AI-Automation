@@ -223,3 +223,20 @@ test('an empty presenter is refused rather than rendered', () => {
   const check = verifyBranding(plan, recorded);
   assert.equal(check.ok, false);
 });
+
+/**
+ * The horizontal export is the same animation at 1920 × 1080. The frame is
+ * shallower, so every overlay has to stay inside the landscape safe area — this
+ * is the regression that keeps a portrait layout from being published wide.
+ */
+test('the demo shorts pass inspection on the 1920 × 1080 landscape frame', () => {
+  for (const [lesson, concept] of [
+    [STACK_LESSON, STACK_CONCEPT],
+    [BINARY_LESSON, BINARY_CONCEPT]
+  ] as const) {
+    const plan = planForLesson(lesson, concept);
+    const audit = inspectPlan(plan, { width: 1920, height: 1080 });
+    assert.equal(audit.ok, true, `${lesson.title}: ${audit.issues.join(' | ')}`);
+    assert.ok(audit.checks.some((check) => check.id === 'algorithm_state' && check.ok));
+  }
+});

@@ -36,6 +36,8 @@ export type PublishCopyInput = {
   space: string;
   category: string;
   slug: string;
+  /** The video's real length in seconds: the copy never claims a fixed slot. */
+  seconds?: number;
 };
 
 // The sans-serif bold and italic alphabets, in code-point order. They are built
@@ -97,11 +99,22 @@ function premise(input: PublishCopyInput): string {
   return `${input.title}: the idea in one short.`;
 }
 
+/** The lesson's own length, phrased for a caption. */
+function lengthPhrase(input: PublishCopyInput): string {
+  const seconds = Math.round(Number(input.seconds) || 0);
+  if (seconds <= 0) return 'one visual short';
+  if (seconds < 60) return `${seconds} seconds`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes} minutes` : `${minutes}m ${rest}s`;
+}
+
 function youtubeTitle(input: PublishCopyInput): string {
+  const length = lengthPhrase(input);
   const candidates = [
-    `${input.title} — the core idea in 45 seconds`,
-    `${input.title} explained visually in 45 seconds`,
-    `${input.title} in 45 seconds`
+    `${input.title} — the core idea in ${length}`,
+    `${input.title} explained visually in ${length}`,
+    `${input.title} in ${length}`
   ];
   return candidates.find((value) => value.length <= 68) || `${input.title}`.slice(0, 68);
 }
@@ -154,7 +167,7 @@ export function buildPublishCopy(input: PublishCopyInput): PlatformCopy[] {
     .filter(Boolean)
     .join('\n\n');
 
-  const linkedinHeadline = toBold(`${input.title}: the idea in 45 seconds`);
+  const linkedinHeadline = toBold(`${input.title}: the idea in ${lengthPhrase(input)}`);
   const linkedinAngle = `${toItalic('Learning angle')}: the visual shows the trace, not a summary of it — every step is one the algorithm actually took.`;
   const linkedinBody = [
     linkedinHeadline,

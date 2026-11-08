@@ -144,6 +144,7 @@ import {
 } from './algorithms/dynamic-programming.ts';
 import { structureChrome, type StructureRun } from './structure-run.ts';
 import { brandingFrom, openingCopy, type Branding } from './branding.ts';
+import { contentDuration, MAX_SECONDS, readSeconds, STEP_SECONDS } from './pacing.ts';
 
 export type SceneType = 'open' | 'hook' | 'concept' | 'code' | 'execution' | 'trace' | 'complexity' | 'summary' | 'brand';
 
@@ -921,10 +922,29 @@ export function runConcept(concept: ConceptInput): ConceptRun {
   };
 }
 
-export function lessonDurationMs(lesson: LessonInput): number {
+/**
+ * The length the lesson's content asks for, in milliseconds.
+ *
+ * There is no target slot any more: the storyboard is authored in seconds of
+ * screen time, the trace earns one readable beat per verified step, and the copy
+ * is measured at reading speed — so the video is as long as it has something to
+ * show and say. The stored `duration_seconds` is only a fallback for a lesson
+ * with no concept to measure.
+ */
+export function lessonDurationMs(
+  lesson: LessonInput,
+  concept?: ConceptInput,
+  branding: Branding = brandingFrom(null)
+): number {
+  if (concept) {
+    return buildScenes(lesson, concept, branding).reduce(
+      (sum, scene) => sum + (Number(scene.durationMs) || 0),
+      0
+    );
+  }
   const seconds = Number(lesson.duration_seconds);
-  const clamped = Number.isFinite(seconds) ? Math.max(10, Math.min(60, seconds)) : 20;
-  return Math.round(clamped * 1000);
+  const fallback = Number.isFinite(seconds) && seconds > 0 ? seconds : 20;
+  return Math.round(fallback * 1000);
 }
 
 /**
@@ -949,10 +969,20 @@ export function allocateDurations(weights: number[], totalMs: number): number[] 
 type SceneSpec = { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> };
 type Bookend = Omit<Scene, 'id' | 'durationMs'>;
 
-/** Lays the main beats out inside the time left after the bookends. */
+/**
+ * The time one beat needs: its authored dwell, or the time its own title,
+ * subtitle and caption take to read — whichever is longer. A wordy caption
+ * stretches its own beat instead of being flashed past.
+ */
+function beatSeconds(spec: SceneSpec): number {
+  const copy = [spec.scene.title, spec.scene.subtitle, spec.scene.caption].filter(Boolean).join(' ');
+  return Math.max(spec.weight, readSeconds(copy));
+}
+
+/** Lays the main beats out inside the time the beats themselves asked for. */
 function layoutBeats(specs: SceneSpec[], totalMs: number): Omit<Scene, 'id'>[] {
   const durations = allocateDurations(
-    specs.map((spec) => spec.weight),
+    specs.map((spec) => beatSeconds(spec)),
     totalMs
   );
   return specs.map((spec, index) => ({ ...spec.scene, durationMs: durations[index] }));
@@ -960,21 +990,34 @@ function layoutBeats(specs: SceneSpec[], totalMs: number): Omit<Scene, 'id'>[] {
 
 /**
  * Assembles one continuous timeline: the branded opening and the branded closing
- * own their durations first, and the lesson itself is fitted into what is left.
+ * own their durations first, and the lesson body keeps the time its beats and its
+ * copy actually need.
  *
- * Nothing is overlaid on top of the original length — every beat, caption and
- * narration timestamp is derived from these durations, and they add up to exactly
- * the lesson's selected duration.
+ * Nothing is fitted into a fixed slot — every beat, caption and narration
+ * timestamp is derived from these durations, and they add up to exactly the
+ * length the content asked for.
  */
 function withBookends(
   specs: SceneSpec[],
-  totalMs: number,
+  lesson: LessonInput,
   branding: Branding,
   bookends: { opening: Bookend; ending: Bookend }
 ): Scene[] {
   const openingMs = Math.round(branding.openingMs);
   const endingMs = Math.round(branding.endingMs);
-  const mainMs = Math.max(1000, totalMs - openingMs - endingMs);
+  const pacing = contentDuration({
+    beats: specs.reduce((sum, spec) => sum + beatSeconds(spec), 0),
+    narration: lesson.narration,
+    copy: [
+      lesson.hook,
+      lesson.objective,
+      lesson.on_screen_text,
+      lesson.key_takeaway,
+      lesson.cta
+    ].filter(Boolean),
+    bookendsMs: openingMs + endingMs
+  });
+  const mainMs = Math.max(1000, pacing.seconds * 1000 - openingMs - endingMs);
   return [
     { ...bookends.opening, durationMs: openingMs },
     ...layoutBeats(specs, mainMs),
@@ -994,41 +1037,49 @@ function closingScene(branding: Branding): Bookend {
 }
 
 /**
- * The shortest lesson that can hold the opening, a readable lesson and the closing.
+ * How much time the verified work needs on screen: one readable beat per step,
+ * plus the fixed explanation beats around it.
  *
- * A stack short needs roughly a second per verified operation (plus its fixed
- * explanation beats); a binary trace needs a few seconds per comparison and a
- * readable halving panel. Below this the storyboard would still add up, but the
- * animation would flash past — so it is reported instead of silently compressed.
+ * This is a floor, not a target — the storyboard itself is longer once the copy
+ * is measured. A lesson whose trace cannot fit is reported rather than animated
+ * at an unreadable speed.
  */
 export function minimumDurationMs(branding: Branding, run: ConceptRun): number {
   const bookends = branding.openingMs + branding.endingMs;
-  if (run.kind === 'binary-search') return bookends + 12000;
-  // A traversal needs a readable setup, one beat per visited cell and a held result.
-  if (run.kind === 'array') return bookends + 14000 + run.eventCount * 900;
-  if (run.kind === 'linked-list') return bookends + 14000 + run.eventCount * 1100;
-  // A structure walk needs the same room: one readable beat per verified step.
-  if (run.kind === 'structure') return bookends + 14000 + run.eventCount * 900;
-  const ops = Math.max(1, run.events.length);
-  // 12.6 weight units of fixed explanation beats around 4.2 per operation.
-  return bookends + Math.round(((ops * 4.2 + 12.6) / 4.2) * 950);
+  const steps = run.kind === 'stack' ? run.events.length : run.eventCount;
+  const perStep = run.kind === 'none' ? 3.2 : STEP_SECONDS[run.kind];
+  // Hook, setup and the closing takeaway panel.
+  return bookends + Math.round((STEP_FIXED_BEATS_SECONDS + steps * perStep) * 1000);
+}
+
+/** The fixed explanation beats a lesson body always carries, in seconds. */
+const STEP_FIXED_BEATS_SECONDS = 13;
+
+/**
+ * The trace beat is a settle-in, one beat per verified step and a held result.
+ * Sizing it from the step count is what keeps a long trace readable.
+ */
+const TRACE_INTRO_SECONDS = { 'binary-search': 3.0, array: 2.4, 'linked-list': 2.4, structure: 2.6 };
+const TRACE_HOLD_SECONDS = { 'binary-search': 5.5, array: 2.4, 'linked-list': 3.0, structure: 3.0 };
+
+function traceSeconds(kind: keyof typeof TRACE_INTRO_SECONDS, steps: number): number {
+  return Math.round((TRACE_INTRO_SECONDS[kind] + Math.max(1, steps) * STEP_SECONDS[kind] + TRACE_HOLD_SECONDS[kind]) * 10) / 10;
 }
 
 /**
- * Beat weights for a stack lesson body, in seconds: 2.2 hook · 1.8 setup ·
- * 4.2 per verified operation · 3.6 LIFO · 5.0 complexity (which also carries the
- * labelled underflow example). The branded opening and closing are allocated
- * separately, before these are fitted into the remaining time.
+ * Beat weights for a stack lesson body, in real seconds on screen: 3.0 hook ·
+ * 3.6 setup · 3.4 per verified operation · 4.6 LIFO · 6.0 complexity (which also
+ * carries the labelled underflow example). These are the content, not a share of
+ * a fixed slot, so five operations take longer than three.
  *
  * These are beat durations on one continuous animation, not separate slides.
  */
-const STACK_BEAT_SECONDS = { hook: 2.2, setup: 1.8, op: 4.2, lifo: 3.6, complexity: 5.0 };
+const STACK_BEAT_SECONDS = { hook: 3.0, setup: 3.6, op: STEP_SECONDS.stack, lifo: 4.6, complexity: 6.0 };
 
 function buildStackScenes(
   lesson: LessonInput,
   concept: ConceptInput,
   run: ConceptRun,
-  totalMs: number,
   branding: Branding
 ): Scene[] {
   const events = run.events;
@@ -1100,7 +1151,7 @@ function buildStackScenes(
     }
   );
 
-  return withBookends(specs, totalMs, branding, {
+  return withBookends(specs, lesson, branding, {
     opening: openingScene(branding, lesson, concept),
     ending: closingScene(branding)
   });
@@ -1113,7 +1164,6 @@ function buildStackScenes(
 function buildBinarySearchScenes(
   lesson: LessonInput,
   concept: ConceptInput,
-  totalMs: number,
   branding: Branding
 ): Scene[] {
   const config = readAnimationConfig(concept) as unknown as BinarySearchConfig;
@@ -1130,11 +1180,12 @@ function buildBinarySearchScenes(
     steps: []
   };
 
-  // Beat weights for the body, in seconds of a 45 second video: hook 2.5 ·
-  // sorted setup 5 · verified trace 27.5 · halving/complexity 7.
+  // Beat seconds for the body: 3.0 hook · 4.6 sorted setup · 2.6 trace intro +
+  // 3.4 per verified comparison + 3.8 halving demo · 6.0 complexity. A search
+  // that needs more comparisons is simply a longer video.
   const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
     {
-      weight: 2.5,
+      weight: 3.0,
       scene: {
         type: 'hook',
         title: lesson.hook || 'Searching a sorted array? Check the middle first.',
@@ -1143,7 +1194,7 @@ function buildBinarySearchScenes(
       }
     },
     {
-      weight: 5,
+      weight: 4.6,
       scene: {
         type: 'concept',
         title: `Sorted array · target ${target}`,
@@ -1153,7 +1204,7 @@ function buildBinarySearchScenes(
       }
     },
     {
-      weight: 27.5,
+      weight: traceSeconds('binary-search', run.steps.length),
       scene: {
         type: 'trace',
         title: `Trace · target ${target}`,
@@ -1163,7 +1214,7 @@ function buildBinarySearchScenes(
       }
     },
     {
-      weight: 7,
+      weight: 6.0,
       scene: {
         type: 'complexity',
         title: lesson.key_takeaway,
@@ -1177,7 +1228,7 @@ function buildBinarySearchScenes(
     }
   ];
 
-  return withBookends(specs, totalMs, branding, {
+  return withBookends(specs, lesson, branding, {
     opening: openingScene(branding, lesson, concept),
     ending: closingScene(branding)
   });
@@ -1192,14 +1243,14 @@ function buildArrayScenes(
   lesson: LessonInput,
   concept: ConceptInput,
   run: ConceptRun,
-  totalMs: number,
   branding: Branding
 ): Scene[] {
   const array = run.input;
   const setup: ArrayVisual = { kind: 'array', array, total: run.total, steps: [] };
+  const steps = run.arraySteps.length || run.eventCount;
   const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
     {
-      weight: 2.5,
+      weight: 3.0,
       scene: {
         type: 'hook',
         title: lesson.hook || 'Reading a cell is one step. Summing them all is not.',
@@ -1208,7 +1259,7 @@ function buildArrayScenes(
       }
     },
     {
-      weight: 5,
+      weight: 4.2,
       scene: {
         type: 'concept',
         title: `${array.length} contiguous cells`,
@@ -1218,7 +1269,7 @@ function buildArrayScenes(
       }
     },
     {
-      weight: 26,
+      weight: traceSeconds('array', steps),
       scene: {
         type: 'trace',
         title: `Trace · sum all ${array.length} cells`,
@@ -1228,7 +1279,7 @@ function buildArrayScenes(
       }
     },
     {
-      weight: 7,
+      weight: 6.0,
       scene: {
         type: 'complexity',
         title: lesson.key_takeaway || 'O(1) access is the whole point of an array',
@@ -1243,7 +1294,7 @@ function buildArrayScenes(
     }
   ];
 
-  return withBookends(specs, totalMs, branding, {
+  return withBookends(specs, lesson, branding, {
     opening: openingScene(branding, lesson, concept),
     ending: closingScene(branding)
   });
@@ -1257,11 +1308,11 @@ function buildLinkedScenes(
   lesson: LessonInput,
   concept: ConceptInput,
   run: ConceptRun,
-  totalMs: number,
   branding: Branding
 ): Scene[] {
   const values = run.input;
   const target = run.target ?? 0;
+  const steps = run.linkedSteps.length || run.eventCount;
   const setup: LinkedListVisual = {
     kind: 'linked-list',
     values,
@@ -1271,7 +1322,7 @@ function buildLinkedScenes(
   };
   const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
     {
-      weight: 2.5,
+      weight: 3.0,
       scene: {
         type: 'hook',
         title: lesson.hook || 'No index, no shortcut: you walk the links.',
@@ -1280,7 +1331,7 @@ function buildLinkedScenes(
       }
     },
     {
-      weight: 5,
+      weight: 4.2,
       scene: {
         type: 'concept',
         title: `${values.length} nodes chained by next`,
@@ -1290,7 +1341,7 @@ function buildLinkedScenes(
       }
     },
     {
-      weight: 26,
+      weight: traceSeconds('linked-list', steps),
       scene: {
         type: 'trace',
         title: `Trace · find ${target}`,
@@ -1300,7 +1351,7 @@ function buildLinkedScenes(
       }
     },
     {
-      weight: 7,
+      weight: 6.0,
       scene: {
         type: 'complexity',
         title: lesson.key_takeaway || 'Cheap to relink, expensive to find',
@@ -1315,7 +1366,7 @@ function buildLinkedScenes(
     }
   ];
 
-  return withBookends(specs, totalMs, branding, {
+  return withBookends(specs, lesson, branding, {
     opening: openingScene(branding, lesson, concept),
     ending: closingScene(branding)
   });
@@ -1331,21 +1382,20 @@ export function buildScenes(
   branding: Branding = brandingFrom(null)
 ): Scene[] {
   const concept = effectiveConcept(lesson, conceptRow);
-  const totalMs = lessonDurationMs(lesson);
   const run = runConcept(concept);
   if (run.kind === 'binary-search' && run.supported) {
-    return buildBinarySearchScenes(lesson, concept, totalMs, branding);
+    return buildBinarySearchScenes(lesson, concept, branding);
   }
   if (run.kind === 'array' && run.supported) {
-    return buildArrayScenes(lesson, concept, run, totalMs, branding);
+    return buildArrayScenes(lesson, concept, run, branding);
   }
   if (run.kind === 'linked-list' && run.supported) {
-    return buildLinkedScenes(lesson, concept, run, totalMs, branding);
+    return buildLinkedScenes(lesson, concept, run, branding);
   }
   if (run.kind === 'structure' && run.supported && run.structure) {
-    return buildStructureScenes(lesson, concept, run.structure, totalMs, branding);
+    return buildStructureScenes(lesson, concept, run.structure, branding);
   }
-  return buildStackScenes(lesson, concept, run, totalMs, branding);
+  return buildStackScenes(lesson, concept, run, branding);
 }
 
 /** What each structure short says about itself before and after the trace. */
@@ -1588,7 +1638,6 @@ function buildStructureScenes(
   lesson: LessonInput,
   concept: ConceptInput,
   run: StructureRun,
-  totalMs: number,
   branding: Branding
 ): Scene[] {
   const copy = structureLessonCopy(run);
@@ -1597,7 +1646,7 @@ function buildStructureScenes(
 
   const specs: { weight: number; scene: Omit<Scene, 'id' | 'durationMs'> }[] = [
     {
-      weight: 2.5,
+      weight: 3.0,
       scene: {
         type: 'hook',
         title: lesson.hook || copy.hook,
@@ -1606,7 +1655,7 @@ function buildStructureScenes(
       }
     },
     {
-      weight: 5,
+      weight: 4.2,
       scene: {
         type: 'concept',
         title: copy.setupTitle,
@@ -1616,7 +1665,7 @@ function buildStructureScenes(
       }
     },
     {
-      weight: 26,
+      weight: traceSeconds('structure', run.trace.steps.length),
       scene: {
         type: 'trace',
         title: copy.traceTitle,
@@ -1626,7 +1675,7 @@ function buildStructureScenes(
       }
     },
     {
-      weight: 7,
+      weight: 6.0,
       scene: {
         type: 'complexity',
         title: lesson.key_takeaway || copy.complexityTitle,
@@ -1637,7 +1686,7 @@ function buildStructureScenes(
     }
   ];
 
-  return withBookends(specs, totalMs, branding, {
+  return withBookends(specs, lesson, branding, {
     opening: openingScene(branding, lesson, concept),
     ending: closingScene(branding)
   });
@@ -1828,7 +1877,7 @@ function storyboardIssues(
   const target = Math.round(seconds * 1000);
   if (total > 0 && Math.abs(total - target) > TOTAL_TOLERANCE_MS) {
     issues.push(
-      `The scene timings add up to ${formatSeconds(total)}s but the lesson duration is ${formatSeconds(target)}s — adjust the scene timings.`
+      `The scene timings add up to ${formatSeconds(total)}s but its content needs ${formatSeconds(target)}s — rebuild the storyboard so every beat keeps its time.`
     );
   }
 
@@ -1867,10 +1916,6 @@ export function lessonIssues(
     issues.push('The concept needs pseudocode or a reference implementation.');
   }
 
-  const seconds = Number(lesson.duration_seconds);
-  const durationValid = Number.isFinite(seconds) && seconds >= 10 && seconds <= 60;
-  if (!durationValid) issues.push('The lesson duration must be between 10 and 60 seconds.');
-
   const effective = effectiveConcept(lesson, concept);
   const config = readAnimationConfig(effective);
   const run = runConcept(effective);
@@ -1890,19 +1935,18 @@ export function lessonIssues(
     );
   }
 
-  if (durationValid) {
-    // A video too short for the bookends and a readable lesson is reported, never
-    // silently compressed: the opening, lesson and closing all have to fit.
-    const neededMs = minimumDurationMs(branding, run);
-    if (Math.round(seconds * 1000) < neededMs) {
-      issues.push(
-        `At ${formatSeconds(seconds * 1000)} there is no room for the ${formatSeconds(branding.openingMs)} opening, ` +
-          `a readable lesson and the ${formatSeconds(branding.endingMs)} closing — raise the duration to at least ` +
-          `${Math.ceil(neededMs / 1000)} seconds.`
-      );
-    }
-    issues.push(...storyboardIssues(lesson, effective, run, seconds, branding));
+  // The length is the content's own. The stored storyboard is measured against
+  // the time its beats, its trace and its copy actually need — not against a slot.
+  const contentMs = lessonDurationMs(lesson, effective, branding);
+  const contentSeconds = contentMs / 1000;
+  if (contentSeconds > MAX_SECONDS) {
+    issues.push(
+      `The verified trace needs ${Math.round(contentSeconds)} seconds — trim the input until it fits ` +
+        `${MAX_SECONDS} seconds.`
+    );
   }
+  issues.push(...storyboardIssues(lesson, effective, run, contentSeconds, branding));
+
 
   return Array.from(new Set(issues));
 }

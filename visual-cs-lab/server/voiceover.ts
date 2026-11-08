@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import type { MotionPlan } from './anim/plan.ts';
 import type { StackEvent } from './algorithms/stack.ts';
 import type { ConceptInput, LessonInput } from './scenes.ts';
+import { retitleForDuration } from './pacing.ts';
 
 export type VoiceoverSegment = {
   id: string;
@@ -306,7 +307,8 @@ export function generateVoiceover(args: {
   }
 
   const script: VoiceoverScript = {
-    title: lesson.title,
+    // The title states the length the video actually publishes at.
+    title: retitleForDuration(lesson.title, plan.durationMs / 1000),
     durationSeconds: Math.round(plan.durationMs) / 1000,
     segments,
     script: continuous(segments)

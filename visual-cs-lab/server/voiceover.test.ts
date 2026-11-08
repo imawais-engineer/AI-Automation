@@ -162,7 +162,7 @@ test('an invented result fails the narration accuracy check', () => {
 test('numbers the trace can honestly state are allowed', () => {
   const plan = planForLesson(BINARY_LESSON, BINARY_CONCEPT);
   const allowed = verifiedNumbers(plan);
-  for (const value of [1, 3, 5, 7, 9, 2, 45]) assert.ok(allowed.has(value), `${value} is allowed`);
+  for (const value of [1, 3, 5, 7, 9, 2]) assert.ok(allowed.has(value), `${value} is allowed`);
   assert.equal(allowed.has(42), false);
 });
 
@@ -171,11 +171,12 @@ test('the copyable script follows the documented format', () => {
   const { script } = generateVoiceover({ plan, lesson: BINARY_LESSON, concept: BINARY_CONCEPT });
   const markdown = formatVoiceover(script);
 
-  assert.match(markdown, /\*\*Video title:\*\* Binary Search in 45 Seconds/);
-  assert.match(markdown, /\*\*Estimated narration duration:\*\* 45\.0s/);
+  // The title and the estimate state the length the content actually needs.
+  assert.match(markdown, /\*\*Video title:\*\* Binary Search in \d+ Seconds/);
+  assert.match(markdown, /\*\*Estimated narration duration:\*\* \d+\.\ds/);
   assert.match(markdown, /\| Timestamp \| Scene \| Voice-over \|/);
-  assert.match(markdown, /\| 00:00–00:03 \| Opening \| Binary Search\. Presented by Muhammad Awais\. \|/);
-  assert.match(markdown, /\| 00:03–00:05 \| Hook \|/);
+  assert.match(markdown, /\| 00:00–00:0\d \| Opening \| Binary Search\. Presented by Muhammad Awais\. \|/);
+  assert.match(markdown, /\| Hook \|/);
   assert.match(markdown, /\*\*Continuous script\*\*/);
   assert.equal(markdown.split(script.script).length, 2, 'the continuous script is included once');
 });
