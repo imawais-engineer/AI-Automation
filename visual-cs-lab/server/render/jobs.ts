@@ -416,10 +416,13 @@ function lastFrameCount(stdout: Buffer): number {
 /** Extracts one frame as a small PNG and measures it. */
 async function sampleFrame(
   output: string,
-  atSeconds: number
+  atSeconds: number,
+  aspect: { width: number; height: number }
 ): Promise<FrameSample | null> {
+  // Sample at a fixed short side so a landscape copy is measured on its own
+  // shape instead of being squashed into the vertical one.
   const width = 270;
-  const height = 480;
+  const height = Math.max(2, Math.round((width * aspect.height) / aspect.width));
   const result = await runFfmpeg(
     [
       '-nostdin',
@@ -480,7 +483,10 @@ async function validateOutput(
   const expectedSeconds = job.expected_frames / profile.fps;
   const samples: FrameSample[] = [];
   for (const fraction of [0.06, 0.28, 0.5, 0.74, 0.94]) {
-    const sample = await sampleFrame(output, Math.max(0, expectedSeconds * fraction));
+    const sample = await sampleFrame(output, Math.max(0, expectedSeconds * fraction), {
+      width: profile.width,
+      height: profile.height
+    });
     if (sample) samples.push(sample);
   }
 
@@ -540,7 +546,9 @@ async function renderJob(job: RenderJob): Promise<void> {
   // Scene inspection runs before a single frame is encoded: text containment,
   // text/object collisions, pointer-to-target alignment and the algorithm state
   // each scene shows. A failure refuses the render instead of shipping it.
-  const audit = inspectPlan(motion);
+  // The plan is inspected at half the profile's size, so a landscape copy is
+  // judged against its own frame instead of the vertical one.
+  const audit = inspectPlan(motion, { width: job.width / 2, height: job.height / 2 });
   appendLog(
     job.id,
     `scene inspection: ${audit.sampled} sampled moments · ${audit.checks.filter((check) => check.ok).length}/${audit.checks.length} checks passed`

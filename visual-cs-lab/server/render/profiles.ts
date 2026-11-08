@@ -7,7 +7,7 @@
  * frame short of it.
  */
 
-export type Preset = 'preview' | 'hd' | 'master' | '4k';
+export type Preset = 'preview' | 'hd' | 'master' | '4k' | 'long';
 
 export type OutputProfile = {
   width: number;
@@ -64,6 +64,15 @@ export const PROFILES: Record<Preset, OutputProfile> = {
     purpose: 'Optional high-resolution master; slow and memory hungry.',
     crf: '21',
     x264: 'veryfast'
+  },
+  long: {
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    label: 'HD Long 1920×1080',
+    purpose: 'Horizontal 16:9 copy of the short, for YouTube and course pages.',
+    crf: '18',
+    x264: 'medium'
   }
 };
 

@@ -28,7 +28,11 @@ import { AnchorMap, type Rect } from './anchors.ts';
 import { recordObject } from './audit.ts';
 import type { Beat, StackBlock, StackPlan } from './plan.ts';
 import {
-  BAND,
+  bandsOf,
+  chromeScale,
+  isLandscape,
+  contentBox,
+  fitForStage,
   SAFE,
   accentTone,
   backdrop,
@@ -46,7 +50,6 @@ import {
   paletteOf,
   popCamera,
   pushCamera,
-  safeBox,
   subjectSilhouette,
   toast,
   type Camera,
@@ -233,7 +236,8 @@ function complexityPanel(
   beat: Beat,
   tMs: number
 ): void {
-  const k = dims.width / 1080;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const p = beatProgress(beat, tMs);
   const panel = envelope(tMs, beat.startMs, beat.endMs, 260, 320);
   if (panel <= 0.01) return;
@@ -407,7 +411,8 @@ function lifoOverlay(
   tMs: number,
   caption: Rect
 ): void {
-  const k = dims.width / 1080;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const alpha = envelope(tMs, beat.startMs, beat.endMs, 240, 300);
   if (alpha <= 0.01) return;
 
@@ -555,11 +560,12 @@ function hookHeadline(
   beat: Beat,
   tMs: number
 ): void {
-  const k = dims.width / 1080;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const p = beatProgress(beat, tMs);
   const alpha = envelope(tMs, beat.startMs, beat.endMs, 320, 380);
   const rise = (1 - easeOutCubic(track(p, 0, 0.42))) * 26 * k;
-  const box = safeBox(k, BAND.hookTop, BAND.hookBottom);
+  const box = contentBox(dims, bands.hookTop, bands.hookBottom);
 
   const fitted = drawText(ctx, plan.copy.hook || 'A stack only lets you touch the top.', {
     box: { ...box, y: box.y + rise },
@@ -598,21 +604,28 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
   const inBrand = Boolean(brandBeat && tMs >= brandBeat.startMs);
   const openBeat = plan.beats.find((item) => item.key === 'open');
   const inOpening = Boolean(openBeat && tMs >= openBeat.startMs && tMs < openBeat.endMs);
-  const k = dims.width / 1080;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const fit = fitForStage(dims, { w: BLOCK_W + 260, h: 180 + plan.maxSlots * SLOT });
   // The underflow inset owns the frame in the second half of the complexity beat,
   // so the tower fades out instead of sitting underneath the card.
   const complexityBeatForStage = plan.beats.find((item) => item.key === 'complexity');
   const stageFade = complexityBeatForStage
     ? 1 - track(beatProgress(complexityBeatForStage, tMs), 0.48, 0.58)
     : 1;
+  // A landscape frame has no room beside the LIFO card, so the card owns the
+  // frame and the tower steps back while it is up.
+  const lifoStageBeat = plan.beats.find((item) => item.key == 'lifo');
+  const lifoFade =
+    isLandscape(dims) && lifoStageBeat ? 1 - track(beatProgress(lifoStageBeat, tMs), 0.12, 0.3) : 1;
 
-  backdrop(ctx, dims, cam, pal, tMs, { glow: inBrand ? 0.6 : 1 });
+  backdrop(ctx, dims, cam, pal, tMs, { glow: inBrand ? 0.6 : 1, fit });
 
   const anchors = new AnchorMap();
   const obstacles: Rect[] = [];
 
-  pushCamera(ctx, dims, cam);
-  drawPlatform(ctx, { x: -430, y: FLOOR_Y, w: 860, pal, alpha: (inBrand ? 0.35 : 1) * stageFade });
+  pushCamera(ctx, dims, cam, fit);
+  drawPlatform(ctx, { x: -430, y: FLOOR_Y, w: 860, pal, alpha: (inBrand ? 0.35 : 1) * stageFade * lifoFade });
   // The opening frames preview the subject as a lit silhouette above the title;
   // it fades out as the first real block is pushed.
   if (inOpening && openBeat) {
@@ -631,7 +644,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
       value: item.block.value,
       pal,
       tone: item.tone,
-      alpha: item.alpha * stageFade,
+      alpha: item.alpha * stageFade * lifoFade,
       scale: item.scale,
       glow: item.glow,
       group: `block:${item.block.id}`
@@ -643,7 +656,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
   // The LIFO demonstration lifts a ghost of the newest value out of the tower, in
   // the same camera space as the blocks it copies.
   const lifoBeatStage = plan.beats.find((item) => item.key === 'lifo');
-  if (lifoBeatStage && tMs >= lifoBeatStage.startMs && tMs < lifoBeatStage.endMs) {
+  if (lifoBeatStage && tMs >= lifoBeatStage.startMs && tMs < lifoBeatStage.endMs && !isLandscape(dims)) {
     lifoGhost(ctx, pal, plan, lifoBeatStage, tMs);
   }
 
@@ -730,7 +743,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
 
   if (hookBeat && tMs >= hookBeat.startMs && tMs < hookBeat.endMs) {
     const alpha = envelope(tMs, hookBeat.startMs, hookBeat.endMs, 320, 380);
-    drawChip(ctx, SAFE * k, BAND.kicker * k, 'STACK · LIFO', {
+    drawChip(ctx, SAFE * k, bands.kicker * k, 'STACK · LIFO', {
       size: 23 * k,
       color: pal.accent,
       pal,
@@ -744,7 +757,7 @@ export function drawStack(ctx: SKRSContext2D, plan: StackPlan, tMs: number, dims
 
   if (setupBeat && tMs >= setupBeat.startMs && tMs < setupBeat.endMs) {
     const alpha = envelope(tMs, setupBeat.startMs, setupBeat.endMs, 220, 260);
-    drawChip(ctx, SAFE * k, BAND.kicker * k, 'STACK · LIFO', {
+    drawChip(ctx, SAFE * k, bands.kicker * k, 'STACK · LIFO', {
       size: 23 * k,
       color: pal.accent,
       pal,

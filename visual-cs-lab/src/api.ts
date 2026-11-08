@@ -100,7 +100,7 @@ export type RenderState =
 export type RenderJob = {
   id: string;
   lesson_id: string;
-  preset: 'preview' | 'hd' | '4k';
+  preset: 'preview' | 'hd' | 'long' | '4k';
   width: number;
   height: number;
   fps: number;

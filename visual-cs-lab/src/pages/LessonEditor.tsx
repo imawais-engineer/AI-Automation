@@ -30,9 +30,10 @@ type Detail = {
 };
 
 const DURATIONS = [10, 20, 30, 45, 60];
-const PRESETS: { key: 'preview' | 'hd' | '4k'; label: string; note: string }[] = [
+const PRESETS: { key: 'preview' | 'hd' | 'long' | '4k'; label: string; note: string }[] = [
   { key: 'preview', label: 'Preview', note: '540×960 · 30 fps · fast iteration' },
   { key: 'hd', label: 'HD', note: '1080×1920 · 30 fps · default publication output' },
+  { key: 'long', label: 'Long', note: '1920×1080 · 30 fps · horizontal 16:9 copy' },
   { key: '4k', label: '4K', note: '2160×3840 · 30 fps · optional master, slow' }
 ];
 
@@ -64,7 +65,7 @@ export default function LessonEditor() {
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [renders, setRenders] = useState<RenderJob[]>([]);
   const [issues, setIssues] = useState<string[]>([]);
-  const [preset, setPreset] = useState<'preview' | 'hd' | '4k'>('preview');
+  const [preset, setPreset] = useState<'preview' | 'hd' | 'long' | '4k'>('preview');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);

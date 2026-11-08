@@ -495,8 +495,8 @@ adminApi.get('/videos', requireAction('content:read'), (_req, res) => {
 adminApi.post('/videos/render', requireAction('render:run'), (req, res) => {
   const lessonId = String(req.body?.lessonId || '');
   const preset = String(req.body?.preset || 'hd');
-  if (!['preview', 'hd', '4k'].includes(preset)) return res.status(400).json({ error: 'Unknown export preset.' });
-  const result = createJob(lessonId, preset as 'preview' | 'hd' | '4k');
+  if (!['preview', 'hd', 'long', '4k'].includes(preset)) return res.status(400).json({ error: 'Unknown export preset.' });
+  const result = createJob(lessonId, preset as 'preview' | 'hd' | 'long' | '4k');
   if (result.error) return res.status(400).json({ error: result.error });
   res.status(201).json({ job: result.job });
 });

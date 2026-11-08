@@ -14,7 +14,10 @@ import { clamp01, easeInOutCubic, easeOutCubic, envelope, lerp, track } from './
 import type { LinkedPlan } from './plan.ts';
 import { factsPanel } from './facts.ts';
 import {
-  BAND,
+  bandsOf,
+  chromeScale,
+  contentBox,
+  fitForStage,
   DESIGN_W,
   SAFE,
   backdrop,
@@ -30,7 +33,6 @@ import {
   paletteOf,
   popCamera,
   pushCamera,
-  safeBox,
   toast,
   type Camera,
   type Dims,
@@ -170,14 +172,16 @@ export function drawLinked(ctx: SKRSContext2D, plan: LinkedPlan, tMs: number, di
   const pal = paletteOf(plan.brand);
   const cam = cameraFor(plan, tMs);
   const state = linkedStateAt(plan, tMs);
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const fit = fitForStage(dims, { w: rowWidth(plan), h: 340 });
   const openBeat = plan.beats.find((beat) => beat.key === 'open');
   const brandBeat = plan.beats.find((beat) => beat.key === 'brand');
   const inOpening = Boolean(openBeat && tMs >= openBeat.startMs && tMs < openBeat.endMs);
   const inBrand = Boolean(brandBeat && tMs >= brandBeat.startMs);
 
-  backdrop(ctx, dims, cam, pal, tMs, { horizon: -430, glow: inBrand ? 0.6 : 1 });
-  pushCamera(ctx, dims, cam);
+  backdrop(ctx, dims, cam, pal, tMs, { horizon: -430, glow: inBrand ? 0.6 : 1 , fit });
+  pushCamera(ctx, dims, cam, fit);
 
   const total = rowWidth(plan);
   const baseline = ROW_TOP + NODE_H + 100;
@@ -265,7 +269,8 @@ function drawOverlays(
   inOpening: boolean,
   inBrand: boolean
 ): void {
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const openBeat = plan.beats.find((beat) => beat.key === 'open');
   const brandBeat = plan.beats.find((beat) => beat.key === 'brand');
   const complexityBeat = plan.beats.find((beat) => beat.key === 'complexity');
@@ -292,7 +297,7 @@ function drawOverlays(
     (inBrand ? 0.25 : 1);
 
   // The chain's identity and what it is being searched for, as a kicker pair.
-  drawChip(ctx, SAFE * k, BAND.kicker * k, `${plan.values.length} NODES · HEAD`, {
+  drawChip(ctx, SAFE * k, bands.kicker * k, `${plan.values.length} NODES · HEAD`, {
     size: 21 * k,
     color: pal.accent,
     pal,
@@ -301,7 +306,7 @@ function drawOverlays(
     maxWidth: (dims.width - 2 * SAFE * k) * 0.5,
     group: 'kicker'
   });
-  drawChip(ctx, dims.width - SAFE * k, BAND.kicker * k, `TARGET ${plan.target}`, {
+  drawChip(ctx, dims.width - SAFE * k, bands.kicker * k, `TARGET ${plan.target}`, {
     size: 21 * k,
     color: pal.violet,
     pal,
@@ -316,7 +321,7 @@ function drawOverlays(
     const p = clamp01((tMs - hookBeat.startMs) / Math.max(1, hookBeat.endMs - hookBeat.startMs));
     const alpha = envelope(tMs, hookBeat.startMs, hookBeat.endMs, 320, 380);
     const rise = (1 - easeOutCubic(track(p, 0, 0.42))) * 26 * k;
-    const box = safeBox(k, BAND.hookTop, BAND.hookBottom);
+    const box = contentBox(dims, bands.hookTop, bands.hookBottom);
     const fitted = drawText(ctx, plan.copy.hook || 'No index, no jump: you walk the links.', {
       box: { ...box, y: box.y + rise },
       role: 'display',

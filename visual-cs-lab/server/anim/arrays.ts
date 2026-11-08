@@ -14,7 +14,10 @@ import { clamp01, easeInOutCubic, easeOutCubic, envelope, lerp, track } from './
 import type { ArrayPlan } from './plan.ts';
 import { factsPanel } from './facts.ts';
 import {
-  BAND,
+  bandsOf,
+  chromeScale,
+  contentBox,
+  fitForStage,
   DESIGN_W,
   SAFE,
   backdrop,
@@ -31,7 +34,6 @@ import {
   paletteOf,
   popCamera,
   pushCamera,
-  safeBox,
   toast,
   type Camera,
   type Dims,
@@ -163,14 +165,16 @@ export function drawArrays(ctx: SKRSContext2D, plan: ArrayPlan, tMs: number, dim
   const pal = paletteOf(plan.brand);
   const cam = cameraFor(plan, tMs);
   const state = arrayStateAt(plan, tMs);
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const fit = fitForStage(dims, { w: rowWidth(plan), h: 500 });
   const openBeat = plan.beats.find((beat) => beat.key === 'open');
   const brandBeat = plan.beats.find((beat) => beat.key === 'brand');
   const inOpening = Boolean(openBeat && tMs >= openBeat.startMs && tMs < openBeat.endMs);
   const inBrand = Boolean(brandBeat && tMs >= brandBeat.startMs);
 
-  backdrop(ctx, dims, cam, pal, tMs, { horizon: -430, glow: inBrand ? 0.6 : 1 });
-  pushCamera(ctx, dims, cam);
+  backdrop(ctx, dims, cam, pal, tMs, { horizon: -430, glow: inBrand ? 0.6 : 1 , fit });
+  pushCamera(ctx, dims, cam, fit);
 
   const width = cellWidth(plan.array.length);
   const total = rowWidth(plan);
@@ -267,7 +271,7 @@ export function drawArrays(ctx: SKRSContext2D, plan: ArrayPlan, tMs: number, dim
     (inBrand ? 0.25 : 1);
 
   // The row's identity and its one-step read, as a kicker pair.
-  drawChip(ctx, SAFE * k, BAND.kicker * k, `${plan.array.length} CELLS · CONTIGUOUS`, {
+  drawChip(ctx, SAFE * k, bands.kicker * k, `${plan.array.length} CELLS · CONTIGUOUS`, {
     size: 21 * k,
     color: pal.accent,
     pal,
@@ -276,7 +280,7 @@ export function drawArrays(ctx: SKRSContext2D, plan: ArrayPlan, tMs: number, dim
     maxWidth: (dims.width - 2 * SAFE * k) * 0.5,
     group: 'kicker'
   });
-  drawChip(ctx, dims.width - SAFE * k, BAND.kicker * k, 'a[i] IN ONE STEP', {
+  drawChip(ctx, dims.width - SAFE * k, bands.kicker * k, 'a[i] IN ONE STEP', {
     size: 21 * k,
     color: pal.accent,
     pal,
@@ -291,7 +295,7 @@ export function drawArrays(ctx: SKRSContext2D, plan: ArrayPlan, tMs: number, dim
     const p = clamp01((tMs - hookBeat.startMs) / Math.max(1, hookBeat.endMs - hookBeat.startMs));
     const alpha = envelope(tMs, hookBeat.startMs, hookBeat.endMs, 320, 380);
     const rise = (1 - easeOutCubic(track(p, 0, 0.42))) * 26 * k;
-    const box = safeBox(k, BAND.hookTop, BAND.hookBottom);
+    const box = contentBox(dims, bands.hookTop, bands.hookBottom);
     const fitted = drawText(ctx, plan.copy.hook || 'Reading a cell is one step. Summing them all is not.', {
       box: { ...box, y: box.y + rise },
       role: 'display',
@@ -353,7 +357,7 @@ export function drawArrays(ctx: SKRSContext2D, plan: ArrayPlan, tMs: number, dim
         sub: `${plan.array.length} values added left to right`,
         color: pal.coral,
         alpha: envelope(tMs, plan.hold.startMs + 180, traceBeat.endMs + 600, 220, 260),
-        y: BAND.resultTop + 66
+        y: bands.resultTop + 66
       });
       captionBar(ctx, dims, pal, {
         text: `Total ${plan.total} — the walk stops at the end of the array.`,

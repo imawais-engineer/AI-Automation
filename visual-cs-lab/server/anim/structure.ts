@@ -16,7 +16,10 @@ import type { Camera, Dims, Palette } from './stage.ts';
 import type { StructurePlan } from './plan.ts';
 import type { ChartSeries, StructureChart, StructureFrame, StructureNode, StructureTone } from './structure-types.ts';
 import {
-  BAND,
+  bandsOf,
+  chromeScale,
+  contentBox,
+  fitForStage,
   DESIGN_W,
   SAFE,
   backdrop,
@@ -33,7 +36,6 @@ import {
   paletteOf,
   popCamera,
   pushCamera,
-  safeBox,
   toast
 } from './stage.ts';
 import { drawText } from '../render/layout.ts';
@@ -434,19 +436,49 @@ function drawFrame(ctx: SKRSContext2D, pal: Palette, state: StructureState, alph
   }
 }
 
+/**
+ * The design-space extents this structure actually reaches across its trace, so a
+ * landscape frame can size it to the space it has instead of guessing.
+ */
+function structureBounds(plan: StructurePlan): { w: number; h: number } {
+  let top = 0;
+  let bottom = 0;
+  let left = 0;
+  let right = 0;
+  let found = false;
+  const times = plan.steps.length > 0
+    ? plan.steps.map((step) => step.startMs + (step.endMs - step.startMs) * 0.6)
+    : plan.beats.map((beat) => beat.startMs + (beat.endMs - beat.startMs) * 0.6);
+  for (const at of times) {
+    const frame = structureStateAt(plan, at).frame;
+    if (!frame || frame.chart) continue;
+    for (const node of frame.nodes) {
+      found = true;
+      top = Math.min(top, node.y - node.h / 2);
+      bottom = Math.max(bottom, node.y + node.h / 2 + 70);
+      left = Math.min(left, node.x - node.w / 2);
+      right = Math.max(right, node.x + node.w / 2);
+    }
+  }
+  if (!found) return { w: 940, h: 420 };
+  return { w: Math.max(560, right - left), h: Math.max(360, bottom - top) };
+}
+
 /** Paints the whole structure short at `tMs`. */
 export function drawStructure(ctx: SKRSContext2D, plan: StructurePlan, tMs: number, dims: Dims): void {
   const pal = paletteOf(plan.brand);
   const cam = cameraFor(plan, tMs);
   const state = structureStateAt(plan, tMs);
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const fit = fitForStage(dims, structureBounds(plan));
   const openBeat = plan.beats.find((beat) => beat.key === 'open');
   const brandBeat = plan.beats.find((beat) => beat.key === 'brand');
   const inOpening = Boolean(openBeat && tMs >= openBeat.startMs && tMs < openBeat.endMs);
   const inBrand = Boolean(brandBeat && tMs >= brandBeat.startMs);
 
-  backdrop(ctx, dims, cam, pal, tMs, { horizon: -430, glow: inBrand ? 0.6 : 1 });
-  pushCamera(ctx, dims, cam);
+  backdrop(ctx, dims, cam, pal, tMs, { horizon: -430, glow: inBrand ? 0.6 : 1 , fit });
+  pushCamera(ctx, dims, cam, fit);
 
   const stageFade = brandBeat ? 1 - track(tMs, brandBeat.startMs, brandBeat.startMs + 420) : 1;
   const arrive = openBeat ? clamp01((tMs - (openBeat.endMs - 320)) / 700) : 1;
@@ -479,7 +511,7 @@ export function drawStructure(ctx: SKRSContext2D, plan: StructurePlan, tMs: numb
   }
 
   const rowAlpha = (openBeat ? clamp01((tMs - (openBeat.endMs - 300)) / 700) : 1) * (inBrand ? 0.25 : 1);
-  drawChip(ctx, SAFE * k, BAND.kicker * k, plan.kickers[0], {
+  drawChip(ctx, SAFE * k, bands.kicker * k, plan.kickers[0], {
     size: 21 * k,
     color: pal.accent,
     pal,
@@ -488,7 +520,7 @@ export function drawStructure(ctx: SKRSContext2D, plan: StructurePlan, tMs: numb
     maxWidth: (dims.width - 2 * SAFE * k) * 0.5,
     group: 'kicker'
   });
-  drawChip(ctx, dims.width - SAFE * k, BAND.kicker * k, plan.kickers[1], {
+  drawChip(ctx, dims.width - SAFE * k, bands.kicker * k, plan.kickers[1], {
     size: 21 * k,
     color: pal.accent,
     pal,
@@ -503,7 +535,7 @@ export function drawStructure(ctx: SKRSContext2D, plan: StructurePlan, tMs: numb
     const p = clamp01((tMs - hookBeat.startMs) / Math.max(1, hookBeat.endMs - hookBeat.startMs));
     const alpha = envelope(tMs, hookBeat.startMs, hookBeat.endMs, 320, 380);
     const rise = (1 - easeOutCubic(track(p, 0, 0.42))) * 26 * k;
-    const box = safeBox(k, BAND.hookTop, BAND.hookBottom);
+    const box = contentBox(dims, bands.hookTop, bands.hookBottom);
     const fitted = drawText(ctx, plan.copy.hook || plan.copy.objective, {
       box: { ...box, y: box.y + rise },
       role: 'display',
@@ -563,7 +595,7 @@ export function drawStructure(ctx: SKRSContext2D, plan: StructurePlan, tMs: numb
         sub: plan.result.sub,
         color: pal.coral,
         alpha: envelope(tMs, plan.hold.startMs + 180, traceBeat.endMs + 600, 220, 260),
-        y: BAND.resultTop + 66
+        y: bands.resultTop + 66
       });
       captionBar(ctx, dims, pal, { text: plan.holdCaption, alpha });
     } else {

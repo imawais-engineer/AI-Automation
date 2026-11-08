@@ -125,6 +125,71 @@ export function chipPaint(pal: Palette, accent: string): ChipPaint {
 export const DESIGN_W = 1080;
 export const DESIGN_H = 1920;
 export const SAFE = 64;
+
+/** The landscape (16:9) chrome design space: overlays are set in real 1080p pixels. */
+export const LAND_W = 1920;
+export const LAND_H = 1080;
+
+/** A landscape frame is wider than it is tall; every layout decision follows it. */
+export function isLandscape(dims: Dims): boolean {
+  return dims.width > dims.height;
+}
+
+/**
+ * Overlay scale: chrome design px → output px. A vertical frame is designed on
+ * 1080 × 1920, a landscape one on 1920 × 1080, so the same type sizes read at the
+ * same proportion on both.
+ */
+export function chromeScale(dims: Dims): number {
+  return dims.width / (isLandscape(dims) ? LAND_W : DESIGN_W);
+}
+
+/**
+ * Stage scale: the animation's own 1080-wide stage space. A landscape frame has
+ * less height to give the stage, so it is zoomed a little past the width-matched
+ * size and the bands above and below it keep clear.
+ */
+export const LAND_ZOOM = 1.3;
+
+/** Where the stage's own origin sits in the frame. */
+export function stageCenter(dims: Dims): { x: number; y: number } {
+  return {
+    x: dims.width / 2,
+    y: isLandscape(dims) ? dims.height * 0.55 : dims.height / 2
+  };
+}
+
+/**
+ * `fit` lets a short hand the landscape frame its own stage scale: a wide row of
+ * cells fills the frame, while a tall stack has to sit smaller in the middle.
+ */
+export function stageScale(dims: Dims, fit = 1): number {
+  return isLandscape(dims) ? (dims.height / LAND_H) * LAND_ZOOM * fit : dims.width / DESIGN_W;
+}
+
+/** The widest a stage may get before it starts crowding the caption strip. */
+export const LAND_MAX_FIT = 1.8;
+
+/**
+ * How much a landscape frame has to shrink a short's own stage bounds (`w` × `h`
+ * design units) so the graphic fills the width without running into the banner
+ * above it or the caption strip below it. A vertical frame is left alone.
+ */
+export function fitForStage(dims: Dims, bounds: { w: number; h: number }): number {
+  if (!isLandscape(dims)) return 1;
+  const k = stageScale(dims, 1);
+  const bands = bandsOf(dims);
+  const chrome = chromeScale(dims);
+  const center = stageCenter(dims);
+  const up = center.y - (bands.operationBottom + 12) * chrome;
+  const down = dims.height - (bands.captionGap + 210) * chrome - center.y;
+  const availableHeight = Math.max(80, Math.min(up, down));
+  // Markers, callouts and pointer labels sit outside the nodes themselves, so the
+  // fit leaves a band above and below for them.
+  const byHeight = (availableHeight * 2) / Math.max(1, bounds.h + 150);
+  const byWidth = (dims.width * 0.94) / Math.max(1, bounds.w);
+  return Math.min(LAND_MAX_FIT, byHeight, byWidth) / k;
+}
 /**
  * The right-hand rail the platform overlays with its like / comment / share
  * buttons, in design pixels. Copy and pills stay out of it.
@@ -150,9 +215,55 @@ export const BAND = {
   footer: 78
 };
 
+/**
+ * The same grid on a 1920 × 1080 frame, in real 1080p pixels. The stage owns the
+ * middle of the frame, so the hook band sits above it and the caption strip below.
+ */
+export const LAND_BAND = {
+  headerTop: 34,
+  headerRule: 78,
+  kicker: 104,
+  operationTop: 136,
+  operationBottom: 260,
+  hookTop: 146,
+  hookBottom: 310,
+  resultTop: 236,
+  resultBottom: 380,
+  captionGap: 62,
+  footer: 46
+};
+
+export type Bands = typeof BAND;
+
+/** The overlay grid of the frame this `dims` describes. */
+export function bandsOf(dims: Dims): Bands {
+  return isLandscape(dims) ? LAND_BAND : BAND;
+}
+
+/**
+ * How much the vertical rhythm of the full-frame compositions is compressed on a
+ * landscape frame: the same stack of blocks, fitted into 1080 px of height.
+ */
+export function frameRhythm(dims: Dims): number {
+  return isLandscape(dims) ? 0.62 : 1;
+}
+
 /** Content box of the frame for a given width factor. */
 export function safeBox(k: number, top = 0, bottom = DESIGN_H): Rect {
   return { x: SAFE * k, y: Math.max(0, top) * k, w: (DESIGN_W - SAFE * 2) * k, h: (bottom - top) * k };
+}
+
+/**
+ * The safe content box of this frame's design space — the box a headline is set
+ * in. It follows the frame's own orientation instead of assuming the vertical one.
+ */
+export function contentBox(dims: Dims, top = 0, bottom?: number): Rect {
+  const k = chromeScale(dims);
+  const land = isLandscape(dims);
+  const designH = land ? LAND_H : DESIGN_H;
+  const designW = land ? LAND_W : DESIGN_W;
+  const low = Math.min(bottom ?? designH, designH);
+  return { x: SAFE * k, y: Math.max(0, top) * k, w: (designW - SAFE * 2) * k, h: Math.max(0, low - top) * k };
 }
 
 export function font(size: number, weight = 400, mono = false): string {
@@ -199,10 +310,11 @@ export function text(
 }
 
 /** Pushes the design-space camera. Pair with `popCamera`. */
-export function pushCamera(ctx: SKRSContext2D, dims: Dims, cam: Camera): number {
-  const k = dims.width / DESIGN_W;
+export function pushCamera(ctx: SKRSContext2D, dims: Dims, cam: Camera, fit = 1): number {
+  const k = stageScale(dims, fit);
+  const center = stageCenter(dims);
   ctx.save();
-  ctx.translate(dims.width / 2, dims.height / 2);
+  ctx.translate(center.x, center.y);
   ctx.scale(k * cam.zoom, k * cam.zoom);
   ctx.translate(-cam.x, -cam.y);
   return k;
@@ -222,10 +334,10 @@ export function backdrop(
   cam: Camera,
   pal: Palette,
   tMs: number,
-  opts: { horizon?: number; glow?: number } = {}
+  opts: { horizon?: number; glow?: number; fit?: number } = {}
 ): void {
   const { width: W, height: H } = dims;
-  const k = W / DESIGN_W;
+  const k = stageScale(dims, opts.fit ?? 1);
   const horizon = opts.horizon ?? -260;
 
   const base = ctx.createLinearGradient(0, 0, 0, H);
@@ -253,7 +365,8 @@ export function backdrop(
 
   // Parallax floor grid.
   ctx.save();
-  ctx.translate(W / 2, H / 2);
+  const gridCenter = stageCenter(dims);
+  ctx.translate(gridCenter.x, gridCenter.y);
   ctx.scale(k, k);
   ctx.translate(-cam.x * 0.22, -cam.y * 0.28);
 
@@ -736,12 +849,13 @@ export function hudHeader(
   pal: Palette,
   opts: { watermark: string; step: string; alpha?: number }
 ): void {
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const alpha = clamp01(opts.alpha ?? 1);
   const S = SAFE * k;
   const width = dims.width - S * 2;
   const size = 22 * k;
-  const baseline = (BAND.headerTop + 16) * k;
+  const baseline = (bands.headerTop + 16) * k;
   const watermark = (opts.watermark || 'VISUAL CS LAB').toUpperCase();
   const watermarkWidth = Math.min(width * 0.6, textWidth(ctx, watermark, 'mono', 600, size));
 
@@ -759,7 +873,7 @@ export function hudHeader(
   ctx.fillStyle = inkTone(pal, 0.62);
   ctx.fillText(step.text, dims.width - S, baseline);
   ctx.fillStyle = rgba(pal.ink, pal.dark ? 0.12 : 0.2);
-  ctx.fillRect(S, BAND.headerRule * k, width, Math.max(1, 1.4 * k));
+  ctx.fillRect(S, bands.headerRule * k, width, Math.max(1, 1.4 * k));
   ctx.restore();
 }
 
@@ -774,11 +888,12 @@ export function hudOperation(
   pal: Palette,
   opts: { label: string; detail: string; accent?: string; alpha?: number; y?: number }
 ): number {
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const alpha = clamp01(opts.alpha ?? 1);
   if (alpha <= 0.01) return 0;
   const S = SAFE * k;
-  const top = (opts.y ?? BAND.operationTop) * k;
+  const top = (opts.y ?? bands.operationTop) * k;
   const color = opts.accent ?? pal.accent;
   const width = dims.width - S * 2 - 30 * k;
 
@@ -819,10 +934,14 @@ export function toast(
   pal: Palette,
   opts: { text: string; sub?: string; color: string; alpha: number; y?: number; scale?: number }
 ): void {
-  const k = dims.width / DESIGN_W;
+  // A landscape frame keeps the stage on screen at the result: the banner and the
+  // caption already carry the result, so the floating card is a vertical-only beat.
+  if (isLandscape(dims)) return;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const alpha = clamp01(opts.alpha);
   if (alpha <= 0.01) return;
-  const centerY = (opts.y ?? (BAND.resultTop + 66)) * k;
+  const centerY = (opts.y ?? (bands.resultTop + 66)) * k;
   const scale = opts.scale ?? 1;
   const S = SAFE * k;
   const maxWidth = dims.width - S * 2;
@@ -917,7 +1036,8 @@ export function captionBar(
   pal: Palette,
   opts: { text: string; alpha?: number; accent?: string }
 ): Rect {
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const alpha = clamp01(opts.alpha ?? 1);
   const value = (opts.text || '').trim();
   if (alpha <= 0.01 || !value) return { x: 0, y: dims.height, w: 0, h: 0 };
@@ -937,7 +1057,7 @@ export function captionBar(
   });
 
   const cardH = fitted.height + 52 * k;
-  const top = dims.height - BAND.captionGap * k - cardH;
+  const top = dims.height - bands.captionGap * k - cardH;
   const card: Rect = { x: S, y: top, w: cardWidth, h: cardH };
 
   ctx.save();
@@ -1055,7 +1175,10 @@ export function openingReveal(
   tMs: number,
   beat: { startMs: number; endMs: number }
 ): void {
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  // A landscape frame has less height, so the opening's vertical rhythm is
+  // compressed while its type keeps its size.
+  const v = frameRhythm(dims);
   const at = tMs - beat.startMs;
   const style = opening.style === 'minimal' || opening.style === 'bold' ? opening.style : 'cinematic';
   // The whole composition drifts forward and fades over the last moments, so the
@@ -1090,7 +1213,7 @@ export function openingReveal(
   // Kicker: what kind of lesson this is.
   const kickerIn = easeOutCubic(track(at, OPENING_TIMING.kicker[0], OPENING_TIMING.kicker[1]));
   if (opening.kicker && kickerIn > 0.01) {
-    drawChip(ctx, cx, 452 * k, opening.kicker.toUpperCase(), {
+    drawChip(ctx, cx, 452 * k * v, opening.kicker.toUpperCase(), {
       size: 22 * k,
       color: pal.accent,
       pal,
@@ -1104,25 +1227,25 @@ export function openingReveal(
   // Title: the lesson's own short title, in the display face.
   const titleIn = easeOutCubic(track(at, OPENING_TIMING.title[0], OPENING_TIMING.title[1]));
   const titleGlow = style === 'cinematic' ? 0.55 + 0.15 * Math.sin(at / 620) : 0;
-  const rise = (1 - titleIn) * (style === 'bold' ? 0 : style === 'minimal' ? 18 : 56) * k;
+  const rise = (1 - titleIn) * (style === 'bold' ? 0 : style === 'minimal' ? 18 : 56) * k * v;
   const titleText = style === 'bold' ? opening.title.toUpperCase() : opening.title;
 
   if (titleGlow > 0 && titleIn > 0.01) {
-    const halo = ctx.createRadialGradient(cx, 760 * k, 20, cx, 760 * k, 520 * k);
+    const halo = ctx.createRadialGradient(cx, 760 * k * v, 20, cx, 760 * k * v, 520 * k);
     halo.addColorStop(0, rgba(pal.accent, 0.16 * titleGlow * titleIn * outro));
     halo.addColorStop(1, rgba(pal.accent, 0));
     ctx.save();
     ctx.fillStyle = halo;
-    ctx.fillRect(0, 380 * k, dims.width, 760 * k);
+    ctx.fillRect(0, 380 * k * v, dims.width, 760 * k * v);
     ctx.restore();
   }
 
   const titleSize = style === 'bold' ? 124 : style === 'minimal' ? 92 : 112;
   const fitted = drawText(ctx, titleText, {
-    box: { x: SAFE * k, y: 530 * k + rise, w: width, h: 420 * k },
+    box: { x: SAFE * k, y: 530 * k * v + rise, w: width, h: 420 * k * v },
     role: 'display',
     weight: 700,
-    size: titleSize * k,
+    size: titleSize * k * (v < 1 ? 0.82 : 1),
     minSize: 54 * k,
     maxLines: 2,
     lineHeight: style === 'bold' ? 1.02 : 1.1,
@@ -1133,7 +1256,7 @@ export function openingReveal(
     group: 'open-title'
   });
 
-  const ruleY = 530 * k + rise + (420 * k + fitted.height) / 2 + 46 * k;
+  const ruleY = 530 * k * v + rise + (420 * k * v + fitted.height) / 2 + 46 * k * v;
   const ruleIn = easeOutCubic(track(at, OPENING_TIMING.rule[0], OPENING_TIMING.rule[1]));
   if (ruleIn > 0.01) {
     const ruleW = (style === 'minimal' ? 120 : 190) * k * ruleIn;
@@ -1151,9 +1274,12 @@ export function openingReveal(
   // Presenter credit: the name carries the brand, the professional title supports it.
   const creditIn = easeOutCubic(track(at, OPENING_TIMING.credit[0], OPENING_TIMING.credit[1]));
   if (creditIn > 0.01) {
-    const creditY = ruleY + 76 * k + (1 - creditIn) * 22 * k;
+    // The credit stack keeps a real gap between the name and the title on a
+    // landscape frame: a compressed offset would sit the two lines on each other.
+    const land = isLandscape(dims);
+    const creditY = ruleY + (land ? 34 : 76) * k * v + (1 - creditIn) * 22 * k;
     drawText(ctx, 'PRESENTED BY', {
-      box: { x: SAFE * k, y: creditY, w: width, h: 32 * k },
+      box: { x: SAFE * k, y: creditY, w: width, h: 32 * k * v },
       role: 'mono',
       weight: 400,
       size: 21 * k,
@@ -1165,10 +1291,10 @@ export function openingReveal(
       group: 'open-credit'
     });
     drawText(ctx, opening.presenter, {
-      box: { x: SAFE * k, y: creditY + 42 * k, w: width, h: 70 * k },
+      box: { x: SAFE * k, y: creditY + (land ? 30 : 42) * k, w: width, h: (land ? 56 : 70 * v) * k },
       role: 'display',
       weight: 600,
-      size: 54 * k,
+      size: (land ? 40 : 54) * k,
       minSize: 34 * k,
       maxLines: 1,
       align: 'center',
@@ -1177,7 +1303,7 @@ export function openingReveal(
       group: 'open-presenter'
     });
     drawText(ctx, opening.role, {
-      box: { x: SAFE * k, y: creditY + 118 * k, w: width, h: 44 * k },
+      box: { x: SAFE * k, y: creditY + (land ? 96 : 118 * v) * k, w: width, h: 44 * k * v },
       role: 'text',
       weight: 500,
       size: 28 * k,
@@ -1293,10 +1419,13 @@ export function openingHook(
   const text = String(value || '').trim();
   const a = clamp01(alpha);
   if (!text || a <= 0.01) return;
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const S = SAFE * k;
   const width = dims.width - S * 2;
-  const box = { x: S, y: 268 * k, w: width, h: 148 * k };
+  const box = isLandscape(dims)
+    ? { x: S, y: bands.hookTop * k, w: width, h: (bands.hookBottom - bands.hookTop) * k }
+    : { x: S, y: 268 * k, w: width, h: 148 * k };
   drawText(ctx, text, {
     box,
     role: 'display',
@@ -1324,7 +1453,8 @@ export function brandEnd(
   brand: BrandLike,
   progress: number
 ): void {
-  const k = dims.width / DESIGN_W;
+  const k = chromeScale(dims);
+  const v = frameRhythm(dims);
   const p = clamp01(progress);
   const bloom = easeOutCubic(track(p, 0, 0.32));
   const nameIn = easeOutCubic(track(p, 0.1, 0.46));
@@ -1333,8 +1463,8 @@ export function brandEnd(
   const closeIn = easeOutCubic(track(p, 0.4, 0.78));
   const cx = dims.width / 2;
   const width = dims.width - SAFE * 2 * k;
-  const nameY = dims.height * 0.42;
-  const rise = (1 - nameIn) * 40 * k;
+  const nameY = dims.height * (isLandscape(dims) ? 0.3 : 0.42);
+  const rise = (1 - nameIn) * 40 * k * v;
 
   // A single pool of light behind the name: the camera has settled, the lesson is over.
   const halo = ctx.createRadialGradient(cx, nameY + 40 * k, 10, cx, nameY + 40 * k, dims.width * 0.7);
@@ -1353,7 +1483,7 @@ export function brandEnd(
   ctx.translate(-cx, -nameY);
 
   drawText(ctx, brand.presenter || BRAND_DEFAULTS.presenter, {
-    box: { x: SAFE * k, y: nameY - 60 * k + rise, w: width, h: 130 * k },
+    box: { x: SAFE * k, y: nameY - 60 * k * v + rise, w: width, h: 130 * k * v },
     role: 'display',
     weight: 700,
     size: 88 * k,
@@ -1367,7 +1497,7 @@ export function brandEnd(
     group: 'brand-name'
   });
 
-  const ruleY = nameY + 78 * k;
+  const ruleY = nameY + 78 * k * v;
   if (ruleIn > 0.01) {
     const ruleW = 96 * k * ruleIn;
     const ruleGrad = ctx.createLinearGradient(cx - ruleW, 0, cx + ruleW, 0);
@@ -1379,7 +1509,7 @@ export function brandEnd(
   }
 
   drawText(ctx, brand.role || BRAND_DEFAULTS.role, {
-    box: { x: SAFE * k, y: ruleY + 34 * k, w: width, h: 48 * k },
+    box: { x: SAFE * k, y: ruleY + 34 * k * v, w: width, h: 48 * k * v },
     role: 'text',
     weight: 500,
     size: 32 * k,
@@ -1392,7 +1522,7 @@ export function brandEnd(
   });
 
   drawText(ctx, brand.closing || brand.outro || '', {
-    box: { x: SAFE * k, y: ruleY + 118 * k, w: width, h: 130 * k },
+    box: { x: SAFE * k, y: ruleY + 118 * k * v, w: width, h: 130 * k * v },
     role: 'text',
     weight: 500,
     size: 40 * k,
@@ -1409,7 +1539,7 @@ export function brandEnd(
   const ctaIn = easeOutCubic(track(p, 0.52, 0.88));
   if (ctaIn > 0.01) {
     if (brand.cta) {
-      drawChip(ctx, cx, ruleY + 300 * k, brand.cta, {
+      drawChip(ctx, cx, ruleY + 300 * k * v, brand.cta, {
         size: 28 * k,
         color: pal.accent,
         pal,
@@ -1423,8 +1553,8 @@ export function brandEnd(
     const socialIn = easeOutCubic(track(p, 0.58, 0.94));
     if (socialIn > 0.01) {
       // Exactly two lines, in a fixed order, each mark the same size.
-      socialLine(ctx, cx, ruleY + 384 * k, 'instagram', brand.instagram || '', pal, k, socialIn);
-      socialLine(ctx, cx, ruleY + 444 * k, 'linkedin', brand.linkedin || '', pal, k, socialIn);
+      socialLine(ctx, cx, ruleY + 384 * k * v, 'instagram', brand.instagram || '', pal, k, socialIn);
+      socialLine(ctx, cx, ruleY + 444 * k * v, 'linkedin', brand.linkedin || '', pal, k, socialIn);
     }
   }
 

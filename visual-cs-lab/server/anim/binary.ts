@@ -25,7 +25,10 @@ import {
 import type { Beat, BinaryPlan } from './plan.ts';
 import type { Rect } from './anchors.ts';
 import {
-  BAND,
+  bandsOf,
+  chromeScale,
+  contentBox,
+  fitForStage,
   SAFE,
   accentTone,
   backdrop,
@@ -42,7 +45,6 @@ import {
   paletteOf,
   popCamera,
   pushCamera,
-  safeBox,
   toast,
   type Camera,
   type Dims,
@@ -406,7 +408,8 @@ function halvingPanel(
   beat: Beat,
   tMs: number
 ): void {
-  const k = dims.width / 1080;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
   const alpha = envelope(tMs, beat.startMs, beat.endMs, 300, 320);
   if (alpha <= 0.01) return;
   const p = clamp01((tMs - beat.startMs) / Math.max(1, beat.endMs - beat.startMs));
@@ -504,11 +507,13 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
   const traceBeat = plan.beats.find((item) => item.title.toLowerCase().includes('trace'));
   const openBeat = plan.beats.find((item) => item.key === 'open');
   const inOpening = Boolean(openBeat && tMs >= openBeat.startMs && tMs < openBeat.endMs);
-  const k = dims.width / 1080;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const fit = fitForStage(dims, { w: ROW_MAX, h: 470 });
 
-  backdrop(ctx, dims, cam, pal, tMs, { horizon: -420, glow: inBrand ? 0.6 : 1 });
+  backdrop(ctx, dims, cam, pal, tMs, { horizon: -420, glow: inBrand ? 0.6 : 1 , fit });
 
-  pushCamera(ctx, dims, cam);
+  pushCamera(ctx, dims, cam, fit);
   // The array sits on a lit baseline rather than a plinth: the blocks are the
   // subject, and a platform would leave a large empty object under them.
   const BLOCK_W = blockWidth(plan.array.length);
@@ -654,7 +659,7 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
   const targetAlpha =
     clamp01((tMs - (openBeat ? openBeat.endMs - 300 : (plan.beats[0]?.startMs ?? 0))) / 700) *
     (inBrand ? 0.25 : 1);
-  drawChip(ctx, SAFE * k, BAND.kicker * k, `TARGET ${plan.target}`, {
+  drawChip(ctx, SAFE * k, bands.kicker * k, `TARGET ${plan.target}`, {
     size: 24 * k,
     color: pal.coral,
     pal,
@@ -664,7 +669,7 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
     maxWidth: (dims.width - 2 * SAFE * k) * 0.45,
     group: 'kicker'
   });
-  drawChip(ctx, dims.width - SAFE * k, BAND.kicker * k, `SORTED · ${plan.array.length} VALUES`, {
+  drawChip(ctx, dims.width - SAFE * k, bands.kicker * k, `SORTED · ${plan.array.length} VALUES`, {
     size: 21 * k,
     color: pal.accent,
     pal,
@@ -681,7 +686,7 @@ export function drawBinary(ctx: SKRSContext2D, plan: BinaryPlan, tMs: number, di
     const p = clamp01((tMs - hookBeat.startMs) / Math.max(1, hookBeat.endMs - hookBeat.startMs));
     const alpha = envelope(tMs, hookBeat.startMs, hookBeat.endMs, 320, 380);
     const rise = (1 - easeOutCubic(track(p, 0, 0.42))) * 26 * k;
-    const box = safeBox(k, BAND.hookTop, BAND.hookBottom);
+    const box = contentBox(dims, bands.hookTop, bands.hookBottom);
     const fitted = drawText(ctx, plan.copy.hook || 'Check the middle, discard half, repeat.', {
       box: { ...box, y: box.y + rise },
       role: 'display',

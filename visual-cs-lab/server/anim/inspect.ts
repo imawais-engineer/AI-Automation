@@ -19,7 +19,7 @@ import type { MotionPlan } from './plan.ts';
 import { binaryStateAt, stackStateAt } from './index.ts';
 import { OPENING_SETTLED_MS } from './stage.ts';
 import { openingCaptureMs } from '../branding.ts';
-import { SAFE, type Dims } from './stage.ts';
+import { SAFE, chromeScale, type Dims } from './stage.ts';
 
 export type SceneCheck = { id: string; label: string; ok: boolean; detail: string };
 
@@ -121,7 +121,7 @@ export function judgeLayout(
   dims: Dims,
   recorded: { moments: RecordedMoment[]; missing: string[] }
 ): SceneCheck[] {
-  const k = dims.width / 1080;
+  const k = chromeScale(dims);
   const bounds: Rect = { x: SAFE * k, y: 10 * k, w: dims.width - SAFE * 2 * k, h: dims.height - 20 * k };
   const textCount = recorded.moments.reduce(
     (sum, moment) => sum + moment.shapes.filter((shape) => shape.kind === 'text').length,
