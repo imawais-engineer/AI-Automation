@@ -30,6 +30,11 @@ function createdParts(iso: string): { date: string; time: string } {
   return { date: PKT_DATE.format(at), time: `${time} PKT` };
 }
 
+/** A video is Vertical (Shorts) when it is taller than it is wide, Horizontal (Long) otherwise. */
+function formatOf(job: Pick<RenderJob, 'width' | 'height'>): { label: string; tone: string } {
+  return job.height > job.width ? { label: 'Vertical', tone: 'accent' } : { label: 'Horizontal', tone: 'good' };
+}
+
 function qualityOf(job: RenderJob): RenderValidation | null {
   if (!job.validation) return null;
   try {
@@ -134,6 +139,7 @@ export default function Renders() {
             <thead>
               <tr>
                 <th>Lesson</th>
+                <th>Format</th>
                 <th>Created</th>
                 <th>State</th>
                 <th>Quality</th>
@@ -149,6 +155,11 @@ export default function Renders() {
                 return (
                   <tr key={job.id}>
                     <td>{job.lesson_title || job.lesson_id}</td>
+                    <td>
+                      <span className={`badge ${formatOf(job).tone}`} title={`${job.width}×${job.height}`}>
+                        {formatOf(job).label}
+                      </span>
+                    </td>
                     <td>
                       <div style={{ fontSize: 12 }}>{created.date}</div>
                       <div className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
@@ -247,6 +258,7 @@ export default function Renders() {
               <div>
                 {[
                   ['Profile', focused.preset],
+                  ['Format', formatOf(focused).label],
                   ['Resolution', `${focused.width}×${focused.height}`],
                   ['Frame rate', `${focused.fps} fps`],
                   ['Frames', `${focused.frames} / ${focused.expected_frames || '—'}`],
