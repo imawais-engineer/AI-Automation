@@ -310,7 +310,8 @@ MP4 or a failed job with an error.
 
 ```bash
 npm install
-npm run dev        # http://localhost:3000
+npm run dev        # http://localhost:3000 (Vite dev server mounted in the API process)
+npm run build      # compiles the client into dist/ for a production server
 npm test           # traces, storyboard timing, layout fitting, voice-over, output quality, pipeline
 npm run typecheck
 ```
@@ -333,6 +334,33 @@ default to the public endpoint and `flux-naveen-en`. Without the key the Studio
 shows "provider not configured" and refuses to record instead of failing mid-mix.
 Each take is validated with ffmpeg and stored as an approved `narration` entry in
 the audio library, where the voice-over export mixes it under the silent master.
+
+## Deploy
+
+One container serves the built client and the API on the same origin. With
+`NODE_ENV=production` the server serves `dist/` (see `server/index.ts`) instead of
+mounting Vite, so run `npm run build` before starting it outside the image too.
+
+```bash
+cd visual-cs-lab
+docker build -t visual-cs-lab .
+docker run -d --name visual-cs-lab -p 3000:3000 \
+  -v visual-cs-lab-data:/data \
+  -e DEEPGRAM_API_KEY=... \
+  visual-cs-lab
+```
+
+`DATA_DIR=/data` and `MEDIA_DIR=/data/media` are baked into the image: the SQLite
+database, rendered MP4s and thumbnails live on that volume and survive a redeploy.
+Everything else (lessons, storyboards, render jobs) is content inside the database,
+so the volume *is* the release's state.
+
+What the image must reach at runtime: nothing, except Deepgram for narration. ffmpeg
+and the fonts ship inside the image; the renderer draws frames in-process, so give
+the container at least 2 vCPU / 2 GB RAM for 1080×1920 masters (4K needs more).
+
+Verified locally: the image builds, `/api/health` answers 200, `/` serves the hashed
+bundle from `dist/`, and a client route (`/learn`) returns the SPA shell.
 
 ## Known gaps (deliberately not faked)
 

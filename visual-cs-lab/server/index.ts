@@ -1151,23 +1151,35 @@ async function start() {
     );
   }
   const server = createServer(app);
-  const vite = await createViteServer({
-    configFile: path.resolve(process.cwd(), 'vite.config.ts'),
-    server: { middlewareMode: true, hmr: { server } },
-    appType: 'custom'
-  });
 
-  app.use(vite.middlewares);
-  app.use('*', async (req, res, next) => {
-    if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
-    try {
-      const template = await readFile(path.resolve(process.cwd(), 'index.html'), 'utf-8');
-      const html = await vite.transformIndexHtml(req.originalUrl, template);
-      res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
-    } catch (error) {
-      next(error);
-    }
-  });
+  // A deployed build serves the compiled client from `dist`; development keeps
+  // the Vite dev server mounted in-process so edits hot-reload on one origin.
+  if (process.env.NODE_ENV === 'production') {
+    const dist = path.resolve(process.cwd(), 'dist');
+    app.use(express.static(dist, { index: false, maxAge: '1h' }));
+    app.use('*', (req, res, next) => {
+      if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+      res.sendFile(path.join(dist, 'index.html'));
+    });
+  } else {
+    const vite = await createViteServer({
+      configFile: path.resolve(process.cwd(), 'vite.config.ts'),
+      server: { middlewareMode: true, hmr: { server } },
+      appType: 'custom'
+    });
+
+    app.use(vite.middlewares);
+    app.use('*', async (req, res, next) => {
+      if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+      try {
+        const template = await readFile(path.resolve(process.cwd(), 'index.html'), 'utf-8');
+        const html = await vite.transformIndexHtml(req.originalUrl, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+      } catch (error) {
+        next(error);
+      }
+    });
+  }
 
   resumeOnBoot();
   server.listen(PORT, '0.0.0.0', () => {
