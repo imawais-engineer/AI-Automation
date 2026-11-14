@@ -67,7 +67,7 @@ prerequisite.
 | `npm run dev` | Server + Vite middleware on port 3000 (live reload) |
 | `npm run build` | Production client build into `dist/` |
 | `npm start` | Run the server (serves `dist/` when `NODE_ENV=production`) |
-| `npm test` | 149 tests across algorithms, traces, rendering, quality and voice-over |
+| `npm test` | 202 tests across algorithms, traces, rendering, quality, voice-over, API contracts, the render queue and backups |
 | `npm run typecheck` | `tsc --noEmit` over server, client and tests |
 
 ## Environment configuration

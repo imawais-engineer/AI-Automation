@@ -4,6 +4,11 @@ Branch: `ai-video-shorts` (`77a647f` + this work). Date: 2026-11-14.
 Scope: reliability, regression protection, backup/recovery, security review. **No feature work, no
 branch consolidation, no data migration, no account changes.**
 
+> **Extended later the same day:** the production image build, a real backup → restore → boot drill
+> and a real crash-recovery drill (SIGKILL mid-encode) are now verified. See
+> [pre-consolidation-verification.md](pre-consolidation-verification.md), which supersedes the
+> "not verified" rows in §4 and §5 below.
+
 ## 1. Changes in this branch
 
 | Area | File(s) | What changed |

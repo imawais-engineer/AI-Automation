@@ -55,7 +55,7 @@ Application shape at audit time:
 | Server | 61 TypeScript files, ~27.4k lines (`index.ts` 1,193 · `scenes.ts` 1,954 · `anim/stage.ts` 1,575 · `db.ts` 1,523 · `anim/structure-frames.ts` 824 · `anim/stack.ts` 865 · `render/jobs.ts` 813) |
 | Client | 25 TSX files, ~3.2k lines in pages plus components |
 | Algorithms | 27 modules + 8 test files |
-| Tests | 17 files, 149 tests |
+| Tests | 17 files, 149 tests (at this commit; 202 after the reliability work in `docs/operations/production-readiness.md`) |
 | Content data | 28 concepts, 28 lessons (23 published), 1 roadmap / 4 modules / 23 items, 84 slides in 11 decks |
 
 ## 4. Findings

@@ -63,7 +63,15 @@ async function start() {
     });
   }
 
-  resumeOnBoot();
+  const recovery = resumeOnBoot();
+  // Boot recovery is reported once: it is the only record that a render was
+  // interrupted by the previous process ending.
+  if (recovery.requeued.length > 0 || recovery.dropped.length > 0 || recovery.partialsRemoved > 0) {
+    console.log(
+      `render recovery: ${recovery.requeued.length} requeued, ${recovery.dropped.length} dropped, ` +
+        `${recovery.partialsRemoved} partial file(s) removed`
+    );
+  }
   // The queue is one sequential worker; the watchdog is what notices when that
   // one worker stops making progress and frees the queue behind it.
   startWatchdog();

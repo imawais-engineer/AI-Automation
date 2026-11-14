@@ -339,7 +339,15 @@ async function pump(): Promise<void> {
       // A job already registered as running is never started a second time; the
       // worker that owns it will clear its state when it finishes.
       if (renderWatchdog.has(next.id)) break;
-      await renderJob(next);
+      try {
+        await renderJob(next);
+      } catch (error) {
+        // A failure outside renderJob's own handling must not become an unhandled
+        // rejection (which would end the process) or leave the queue stuck: the
+        // job takes the normal failure path and the next queued job runs.
+        console.error(`render ${next.id} failed unexpectedly`, error);
+        await failJob(next, `Render failed unexpectedly: ${(error as Error).message}`);
+      }
     }
   } finally {
     pumpingState.active = false;
