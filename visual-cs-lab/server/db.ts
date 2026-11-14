@@ -190,6 +190,32 @@ ensureColumn('render_jobs', 'expected_seconds', 'REAL NOT NULL DEFAULT 0');
 ensureColumn('render_jobs', 'storyboard_hash', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('render_jobs', 'snapshot', "TEXT NOT NULL DEFAULT '[]'");
 ensureColumn('render_jobs', 'validation', 'TEXT');
+/** Render queue liveness: the worker refreshes this while it makes progress. */
+ensureColumn('render_jobs', 'heartbeat_at', 'TEXT');
+/** How many times a crashed render was recovered before it is given up on. */
+ensureColumn('render_jobs', 'attempts', 'INTEGER NOT NULL DEFAULT 0');
+
+/**
+ * One active render per lesson, enforced by the database rather than by a read
+ * in the enqueue path: two concurrent enqueues (two Studio tabs, or a retry
+ * racing a new render) cannot both win. Only active states are covered, so the
+ * finished renders of a lesson are unaffected.
+ *
+ * The index is created only when existing data allows it; a database that
+ * already carries duplicate active rows is reported instead of silently
+ * dropping history.
+ */
+try {
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS render_jobs_one_active_per_lesson
+       ON render_jobs(lesson_id) WHERE state IN ('queued','rendering','encoding','validating')`
+  );
+} catch (error) {
+  console.warn(
+    `render queue: active-render uniqueness index not created (${(error as Error).message}); ` +
+      'duplicate active jobs may exist in this database'
+  );
+}
 /** Per-lesson animation input chosen on the Create screen. */
 ensureColumn('lessons', 'animation_input', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('voiceovers', 'duration_seconds', 'REAL NOT NULL DEFAULT 0');

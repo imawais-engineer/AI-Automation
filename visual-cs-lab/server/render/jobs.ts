@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { open, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
@@ -22,6 +22,7 @@ import {
   type FrameSample,
   type RenderValidation
 } from './quality.ts';
+import { RenderWatchdog, watchdogLimitsFromEnv, type Stall } from './watchdog.ts';
 
 export type { Preset } from './profiles.ts';
 export { PROFILES as PRESETS } from './profiles.ts';
@@ -64,7 +65,111 @@ export type RenderJob = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** Refreshed while the worker makes progress; a stale one means a stall. */
+  heartbeat_at?: string | null;
+  /** Automatic recoveries after a process restart. */
+  attempts?: number;
 };
+
+/* ---------------------------------------------------------- queue liveness */
+
+/**
+ * The queue is one sequential worker in this process. `renderWatchdog` is the
+ * only record of what that worker is doing right now, so a stall can be aborted
+ * instead of blocking every queued job behind it.
+ */
+export const renderWatchdog = new RenderWatchdog(watchdogLimitsFromEnv());
+
+/** One automatic requeue after a crash: a render that kills the process twice is not retried forever. */
+export const MAX_RECOVERY_ATTEMPTS = 1;
+
+/** The in-progress file of a render: never a finished video, never a database row. */
+const PARTIAL_SUFFIX = '.partial.mp4';
+
+function finalPath(id: string): string {
+  return path.join(MEDIA_DIR, `${id}.mp4`);
+}
+
+function partialPath(id: string): string {
+  return path.join(MEDIA_DIR, `${id}${PARTIAL_SUFFIX}`);
+}
+
+/**
+ * Ends a child process without leaving an orphan behind: close its stdin, ask
+ * with SIGTERM, and insist with SIGKILL if it is still alive shortly after.
+ */
+function terminateChild(child: ChildProcess): void {
+  try {
+    child.stdin?.destroy();
+  } catch {
+    /* already closed */
+  }
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    /* already gone */
+  }
+  const hard = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  }, 3000);
+  hard.unref?.();
+  child.once('close', () => clearTimeout(hard));
+}
+
+/** Writes the heartbeat with the progress update: one row write per batch of frames. */
+function noteProgress(job: RenderJob, progress: number, frames: number): void {
+  const stamp = nowIso();
+  renderWatchdog.heartbeat(job.id);
+  db.prepare('UPDATE render_jobs SET progress = ?, frames = ?, heartbeat_at = ? WHERE id = ?').run(
+    progress,
+    frames,
+    stamp,
+    job.id
+  );
+}
+
+export type WatchdogEvent = Stall & { at: string };
+
+/**
+ * Looks for a stalled render and aborts it. Exported for tests and for the
+ * interval started by `startWatchdog()`; the abort itself is what frees the
+ * queue, the log line is what the Studio sees.
+ */
+export function runWatchdogTick(now = Date.now()): WatchdogEvent[] {
+  const stalls = renderWatchdog.tick(now);
+  for (const stall of stalls) {
+    appendLog(stall.id, `watchdog: ${stall.detail} — aborting this render`);
+  }
+  return stalls.map((stall) => ({ ...stall, at: nowIso() }));
+}
+
+let watchdogTimer: NodeJS.Timeout | null = null;
+
+/** Starts the liveness check. Safe to call twice: one interval per process. */
+export function startWatchdog(): void {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(() => {
+    try {
+      runWatchdogTick();
+    } catch (error) {
+      console.error('render watchdog tick failed', error);
+    }
+  }, renderWatchdog.limits.intervalMs);
+  watchdogTimer.unref?.();
+}
+
+/** Stops the interval (tests, and a clean shutdown). In-flight aborts are untouched. */
+export function stopWatchdog(): void {
+  if (watchdogTimer) clearInterval(watchdogTimer);
+  watchdogTimer = null;
+}
 
 export { lessonBundle } from '../motion.ts';
 
@@ -114,25 +219,35 @@ export function createJob(lessonId: string, preset: Preset): { job?: RenderJob; 
   const expectedMs = totalDuration(scenes);
   const frames = totalFrames(expectedMs, profile.fps);
   const id = newId();
-  db.prepare(
-    `INSERT INTO render_jobs (id, lesson_id, preset, width, height, fps, state, progress, log, dedupe_key,
-       expected_frames, expected_seconds, storyboard_hash, snapshot, theme_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, '', ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id,
-    lessonId,
-    preset,
-    profile.width,
-    profile.height,
-    profile.fps,
-    `${lessonId}:${preset}:${hash.slice(0, 8)}`,
-    frames,
-    expectedMs / 1000,
-    hash,
-    snapshot,
-    lessonThemeId(lessonId),
-    nowIso()
-  );
+  try {
+    db.prepare(
+      `INSERT INTO render_jobs (id, lesson_id, preset, width, height, fps, state, progress, log, dedupe_key,
+         expected_frames, expected_seconds, storyboard_hash, snapshot, theme_id, created_at, heartbeat_at, attempts)
+       VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, '', ?, ?, ?, ?, ?, ?, ?, NULL, 0)`
+    ).run(
+      id,
+      lessonId,
+      preset,
+      profile.width,
+      profile.height,
+      profile.fps,
+      `${lessonId}:${preset}:${hash.slice(0, 8)}`,
+      frames,
+      expectedMs / 1000,
+      hash,
+      snapshot,
+      lessonThemeId(lessonId),
+      nowIso()
+    );
+  } catch (error) {
+    // Two enqueues can pass the read above at the same time; the database's
+    // one-active-render index is what actually decides between them.
+    const message = (error as Error).message || '';
+    if (/UNIQUE|constraint/i.test(message)) {
+      return { error: 'This lesson already has a render in progress.' };
+    }
+    throw error;
+  }
 
   pump();
   return { job: jobById(id) };
@@ -165,7 +280,8 @@ function recordFailure(job: RenderJob, error: string): void {
 /** Drops the job row and any partial file: a failed generation is never stored. */
 async function failJob(job: RenderJob, error: string): Promise<void> {
   recordFailure(job, error);
-  await unlink(path.join(MEDIA_DIR, `${job.id}.mp4`)).catch(() => undefined);
+  await unlink(finalPath(job.id)).catch(() => undefined);
+  await unlink(partialPath(job.id)).catch(() => undefined);
   db.prepare('DELETE FROM render_jobs WHERE id = ?').run(job.id);
 }
 
@@ -175,8 +291,12 @@ export function retryJob(id: string): { job?: RenderJob; error?: string } {
   if (job.state !== 'error' && job.state !== 'cancelled') {
     return { error: 'Only failed or cancelled jobs can be retried.' };
   }
+  // A manual retry is a fresh decision: it clears the recovery counter and the
+  // stale heartbeat, so the watchdog gives the new attempt its full budget.
   db.prepare(
-    "UPDATE render_jobs SET state = 'queued', progress = 0, error = NULL, log = '', started_at = NULL, finished_at = NULL, validation = NULL WHERE id = ?"
+    `UPDATE render_jobs SET state = 'queued', progress = 0, frames = 0, error = NULL, log = '',
+       started_at = NULL, finished_at = NULL, validation = NULL, heartbeat_at = NULL, attempts = 0
+     WHERE id = ?`
   ).run(id);
   pump();
   return { job: jobById(id) };
@@ -192,6 +312,9 @@ export function cancelJob(id: string): { job?: RenderJob; error?: string } {
     return { error: 'This job has already finished.' };
   }
   cancelled.add(id);
+  // A running encode stops on the next frame anyway; aborting now also unblocks
+  // one that is waiting on a pipe write, without waiting for the watchdog.
+  renderWatchdog.get(id)?.abort.abort(new Error('cancelled'));
   if (job.state === 'queued') {
     db.prepare("UPDATE render_jobs SET state = 'cancelled', error = 'Cancelled before rendering.', finished_at = ? WHERE id = ?").run(
       nowIso(),
@@ -202,21 +325,24 @@ export function cancelJob(id: string): { job?: RenderJob; error?: string } {
   return { job: jobById(id) };
 }
 
-let pumping = false;
+export const pumpingState = { active: false };
 
 async function pump(): Promise<void> {
-  if (pumping) return;
-  pumping = true;
+  if (pumpingState.active) return;
+  pumpingState.active = true;
   try {
     for (;;) {
       const next = db
         .prepare("SELECT * FROM render_jobs WHERE state = 'queued' ORDER BY created_at LIMIT 1")
         .get() as RenderJob | undefined;
       if (!next) break;
+      // A job already registered as running is never started a second time; the
+      // worker that owns it will clear its state when it finishes.
+      if (renderWatchdog.has(next.id)) break;
       await renderJob(next);
     }
   } finally {
-    pumping = false;
+    pumpingState.active = false;
   }
 }
 
@@ -230,21 +356,49 @@ function setState(id: string, state: RenderState, extra: Record<string, unknown>
   );
 }
 
+/**
+ * Runs one ffmpeg command to completion.
+ *
+ * A timeout is always applied: a probe or decode pass that never returns would
+ * otherwise hold the sequential queue forever. On timeout the child is ended
+ * (SIGTERM, then SIGKILL) and the caller sees a normal non-zero exit with the
+ * reason in stderr.
+ */
 export function runFfmpeg(
   args: string[],
-  opts: { captureStdout?: boolean } = {}
+  opts: { captureStdout?: boolean; timeoutMs?: number } = {}
 ): Promise<{ code: number; stderr: string; stdout: Buffer }> {
+  const timeoutMs = opts.timeoutMs ?? renderWatchdog.limits.validateMs;
   return new Promise((resolve) => {
     const proc = spawn(ffmpegPath as string, args, { stdio: ['ignore', opts.captureStdout ? 'pipe' : 'ignore', 'pipe'] });
     let stderr = '';
+    let settled = false;
     const chunks: Buffer[] = [];
+    let timer: NodeJS.Timeout | null = null;
+    const finish = (result: { code: number; stderr: string; stdout: Buffer }) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
     proc.stderr?.on('data', (chunk: Buffer) => {
       stderr += chunk.toString();
       if (stderr.length > 12000) stderr = stderr.slice(-12000);
     });
     if (proc.stdout) proc.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-    proc.on('close', (code) => resolve({ code: code ?? 1, stderr, stdout: Buffer.concat(chunks) }));
-    proc.on('error', (error) => resolve({ code: 1, stderr: String(error), stdout: Buffer.alloc(0) }));
+    proc.on('close', (code) => finish({ code: code ?? 1, stderr, stdout: Buffer.concat(chunks) }));
+    proc.on('error', (error) => finish({ code: 1, stderr: String(error), stdout: Buffer.alloc(0) }));
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        terminateChild(proc);
+        finish({
+          code: 124,
+          stderr: `${stderr}\nffmpeg timed out after ${Math.round(timeoutMs / 1000)}s`,
+          stdout: Buffer.concat(chunks)
+        });
+      }, timeoutMs);
+      timer.unref?.();
+    }
   });
 }
 
@@ -273,6 +427,8 @@ async function encodeMoment(args: {
   meta?: { title: string; artist: string; comment: string };
   onProgress?: (framesWritten: number, total: number) => void;
   isCancelled?: () => boolean;
+  /** Aborted by the watchdog or a cancel request: the encoder is ended safely. */
+  signal?: AbortSignal;
 }): Promise<{ ok: boolean; frames: number; error?: string }> {
   const { motion, profile, output } = args;
   const fromMs = args.fromMs ?? 0;
@@ -325,6 +481,10 @@ async function encodeMoment(args: {
     if (encoderError.length > 4000) encoderError = encoderError.slice(-4000);
   });
   const exited = new Promise<number>((resolve) => encoder.on('close', (code) => resolve(code ?? 1)));
+  // An abort ends the encoder instead of leaving an orphaned ffmpeg behind.
+  const onAbort = () => terminateChild(encoder);
+  args.signal?.addEventListener('abort', onAbort, { once: true });
+  if (args.signal?.aborted) onAbort();
 
   const write = (buffer: Buffer) =>
     new Promise<void>((resolve, reject) => {
@@ -341,7 +501,7 @@ async function encodeMoment(args: {
 
   try {
     for (let i = 0; i < total; i++) {
-      if (args.isCancelled?.()) throw new Error('cancelled');
+      if (args.isCancelled?.() || args.signal?.aborted) throw new Error('cancelled');
       const tMs = fromMs + (i / profile.fps) * 1000;
       drawMoment(ctx, motion, Math.min(tMs, motion.durationMs - 1), {
         width: profile.width,
@@ -354,6 +514,7 @@ async function encodeMoment(args: {
     }
     encoder.stdin.end();
     const code = await exited;
+    args.signal?.removeEventListener('abort', onAbort);
     if (code !== 0) {
       return {
         ok: false,
@@ -363,16 +524,8 @@ async function encodeMoment(args: {
     }
     return { ok: true, frames: frameIndex };
   } catch (error) {
-    try {
-      encoder.stdin.destroy();
-    } catch {
-      /* already closed */
-    }
-    try {
-      encoder.kill('SIGKILL');
-    } catch {
-      /* already gone */
-    }
+    args.signal?.removeEventListener('abort', onAbort);
+    terminateChild(encoder);
     await exited.catch(() => 1);
     return { ok: false, frames: frameIndex, error: (error as Error).message };
   }
@@ -469,7 +622,7 @@ async function sampleFrame(
       '-vcodec', 'png',
       '-'
     ],
-    { captureStdout: true }
+    { captureStdout: true, timeoutMs: 60_000 }
   );
   if (result.code !== 0 || result.stdout.length === 0) return null;
   try {
@@ -492,9 +645,14 @@ async function sampleFrame(
 async function validateOutput(
   job: RenderJob,
   output: string,
-  profile: OutputProfile
+  profile: OutputProfile,
+  /** Called between phases so a long decode is never mistaken for a stall. */
+  onActivity?: () => void
 ): Promise<RenderValidation> {
-  const probe = await runFfmpeg(['-hide_banner', '-i', output]);
+  const probe = await runFfmpeg(['-hide_banner', '-i', output], {
+    timeoutMs: Math.min(renderWatchdog.limits.validateMs, 120_000)
+  });
+  onActivity?.();
   const media = parseMediaInfo(probe.stderr);
   const info = await stat(output);
   // Only the container signature is needed, so a 4K master is not read into memory.
@@ -508,8 +666,9 @@ async function validateOutput(
 
   const decode = await runFfmpeg(
     ['-nostdin', '-v', 'error', '-i', output, '-an', '-f', 'null', '-progress', 'pipe:1', '-nostats', '-'],
-    { captureStdout: true }
+    { captureStdout: true, timeoutMs: renderWatchdog.limits.validateMs }
   );
+  onActivity?.();
   const decodedFrames = decode.code === 0 ? lastFrameCount(decode.stdout) : 0;
 
   // Five points across the short: beginning, two middle beats (where the
@@ -523,6 +682,7 @@ async function validateOutput(
       height: profile.height
     });
     if (sample) samples.push(sample);
+    onActivity?.();
   }
 
   return assessRender({
@@ -563,9 +723,34 @@ export function validationSampleMoments(seconds: number, snapshot: string): numb
   return [...new Set(times)].sort((a, b) => a - b);
 }
 
+/**
+ * Claims a queued job and runs it.
+ *
+ * The claim is one conditional UPDATE (`state = 'queued'`), so a job reaches the
+ * encoder exactly once even if two pumps or a retry race each other. The job is
+ * registered with the watchdog for the whole run, and always deregistered.
+ */
 async function renderJob(job: RenderJob): Promise<void> {
-  setState(job.id, 'rendering', { started_at: nowIso(), error: null, progress: 0, log: '', validation: null });
+  if (renderWatchdog.has(job.id)) return;
+  const stamp = nowIso();
+  const claim = db
+    .prepare(
+      `UPDATE render_jobs SET state = 'rendering', started_at = ?, heartbeat_at = ?, error = NULL,
+         progress = 0, frames = 0, log = '', validation = NULL
+       WHERE id = ? AND state = 'queued'`
+    )
+    .run(stamp, stamp, job.id);
+  if (claim.changes === 0) return;
 
+  const running = renderWatchdog.register({ id: job.id, lessonId: job.lesson_id, stage: 'rendering' });
+  try {
+    await runClaimedJob(job, running);
+  } finally {
+    renderWatchdog.finish(job.id);
+  }
+}
+
+async function runClaimedJob(job: RenderJob, running: ReturnType<RenderWatchdog['register']>): Promise<void> {
   const bundle = lessonBundle(job.lesson_id);
   if (!bundle) {
     await failJob(job, 'The lesson was deleted before rendering.');
@@ -622,11 +807,15 @@ async function renderJob(job: RenderJob): Promise<void> {
     appendLog(job.id, 'note: the lesson storyboard has been edited since this render was queued');
   }
 
-  const output = path.join(MEDIA_DIR, `${job.id}.mp4`);
+  // The encode writes `<id>.partial.mp4`. Only a successful encode is renamed to
+  // `<id>.mp4`, so a crash mid-write can never leave a file that looks finished.
+  const partial = partialPath(job.id);
+  const output = finalPath(job.id);
+  await unlink(partial).catch(() => undefined);
   const result = await encodeMoment({
     motion,
     profile,
-    output,
+    output: partial,
     meta: {
       title: bundle.lesson.title,
       artist: branding.presenter,
@@ -634,30 +823,45 @@ async function renderJob(job: RenderJob): Promise<void> {
     },
     onProgress: (written, total) => {
       const pct = Math.min(95, (written / Math.max(1, total)) * 95);
-      db.prepare('UPDATE render_jobs SET progress = ?, frames = ? WHERE id = ?').run(pct, written, job.id);
+      noteProgress(job, pct, written);
     },
-    isCancelled: () => cancelled.has(job.id)
+    isCancelled: () => cancelled.has(job.id),
+    signal: running.abort.signal
   });
 
   if (!result.ok) {
     const isCancel = cancelled.has(job.id);
     cancelled.delete(job.id);
-    await unlink(output).catch(() => undefined);
+    await unlink(partial).catch(() => undefined);
+    const stallReason = renderWatchdog.abortReason(job.id);
     if (isCancel) {
       setState(job.id, 'cancelled', { error: 'Cancelled while rendering.', finished_at: nowIso() });
       appendLog(job.id, 'cancelled');
+    } else if (stallReason) {
+      await failJob(job, `Render failed: ${stallReason}.`);
     } else {
       await failJob(job, `Render failed: ${result.error}`);
     }
     return;
   }
 
+  // The encode is complete; the file becomes the render's output at this point.
+  try {
+    await rename(partial, output);
+  } catch (error) {
+    await unlink(partial).catch(() => undefined);
+    await failJob(job, `The finished encode could not be stored: ${(error as Error).message}`);
+    return;
+  }
+
   setState(job.id, 'encoding', { progress: 96, frames: result.frames });
+  renderWatchdog.markStage(job.id, 'encoding');
   appendLog(job.id, `${result.frames} frames written, encode finished`);
   setState(job.id, 'validating', { progress: 98 });
+  renderWatchdog.markStage(job.id, 'validating');
 
   try {
-    const validation = await validateOutput(job, output, profile);
+    const validation = await validateOutput(job, output, profile, () => renderWatchdog.heartbeat(job.id));
     // The encoded file's checks and the plan's scene checks belong to one report.
     validation.checks.push(...audit.checks);
     validation.ok = validation.ok && audit.checks.every((check) => check.ok);
@@ -786,28 +990,92 @@ export function scenesFor(lessonId: string): Scene[] | null {
   return safeJson<Scene[]>(bundle.lesson.scenes || '[]', []);
 }
 
-export function resumeOnBoot(): void {
-  // Interrupted and already-failed jobs are dropped, never kept as history.
-  const stale = db
-    .prepare(
-      "SELECT id, output_path FROM render_jobs WHERE state IN ('rendering','encoding','validating','error')"
-    )
-    .all() as { id: string; output_path: string | null }[];
-  for (const row of stale) {
-    for (const file of [path.join(MEDIA_DIR, `${row.id}.mp4`), row.output_path]) {
-      if (file) {
-        try {
-          unlinkSync(file);
-        } catch {
-          /* already gone */
-        }
+export type BootRecovery = { requeued: string[]; dropped: string[]; partialsRemoved: number };
+
+function removeJobFiles(id: string, outputPath?: string | null): void {
+  for (const file of [finalPath(id), partialPath(id), outputPath]) {
+    if (!file) continue;
+    try {
+      unlinkSync(file);
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/**
+ * Boot recovery for the sequential queue.
+ *
+ * - Partial files (`<id>.partial.mp4`) are deleted: a half-written encode is
+ *   never a finished video, and nothing points at one after a crash.
+ * - A job that was in flight is requeued once, so a server restart does not lose
+ *   the render a person asked for. A job that has already used its one automatic
+ *   recovery is dropped, as is a job whose lesson already has another active
+ *   render, so a crash loop cannot spin forever.
+ * - Rows in `error` are dropped, matching the policy that failed generations are
+ *   not stored as history. Completed (`done`) jobs and their MP4s are untouched.
+ */
+export function resumeOnBoot(opts: { pump?: boolean } = {}): BootRecovery {
+  const summary: BootRecovery = { requeued: [], dropped: [], partialsRemoved: 0 };
+  const recoveredAt = nowIso();
+
+  // 1. Leftover partial files from a crash: never a finished render.
+  if (existsSync(MEDIA_DIR)) {
+    for (const entry of readdirSync(MEDIA_DIR)) {
+      if (!entry.endsWith(PARTIAL_SUFFIX)) continue;
+      try {
+        unlinkSync(path.join(MEDIA_DIR, entry));
+        summary.partialsRemoved += 1;
+      } catch {
+        /* already gone */
       }
     }
   }
-  db.prepare(
-    "DELETE FROM render_jobs WHERE state IN ('rendering','encoding','validating','error')"
-  ).run();
-  pump();
+
+  // 2. Interrupted jobs: requeue once, then give up.
+  const interrupted = db
+    .prepare(
+      `SELECT id, lesson_id, output_path, attempts FROM render_jobs
+       WHERE state IN ('rendering','encoding','validating') ORDER BY created_at`
+    )
+    .all() as { id: string; lesson_id: string; output_path: string | null; attempts: number }[];
+  for (const row of interrupted) {
+    const otherActive = db
+      .prepare(
+        `SELECT id FROM render_jobs WHERE lesson_id = ? AND id != ?
+         AND state IN ('queued','rendering','encoding','validating') LIMIT 1`
+      )
+      .get(row.lesson_id, row.id) as { id: string } | undefined;
+    const attempts = Number(row.attempts || 0);
+    if (otherActive || attempts >= MAX_RECOVERY_ATTEMPTS) {
+      // The MP4 of an unfinished job is never a finished render.
+      removeJobFiles(row.id, row.output_path);
+      db.prepare('DELETE FROM render_jobs WHERE id = ?').run(row.id);
+      summary.dropped.push(row.id);
+      continue;
+    }
+    removeJobFiles(row.id, row.output_path);
+    db.prepare(
+      `UPDATE render_jobs SET state = 'queued', progress = 0, frames = 0, error = NULL,
+         started_at = NULL, heartbeat_at = NULL, attempts = ?, log = ?
+       WHERE id = ?`
+    ).run(attempts + 1, `[recovery] requeued after a process restart at ${recoveredAt}`, row.id);
+    summary.requeued.push(row.id);
+  }
+
+  // 3. Failed rows are not kept (existing policy), and neither are their files.
+  const failed = db.prepare("SELECT id, output_path FROM render_jobs WHERE state = 'error'").all() as {
+    id: string;
+    output_path: string | null;
+  }[];
+  for (const row of failed) {
+    removeJobFiles(row.id, row.output_path);
+    db.prepare('DELETE FROM render_jobs WHERE id = ?').run(row.id);
+    summary.dropped.push(row.id);
+  }
+
+  if (opts.pump !== false) pump();
+  return summary;
 }
 
 export { parseValidation, PROFILES as OUTPUT_PROFILES };

@@ -2,12 +2,16 @@
 
 ```bash
 cd visual-cs-lab
-npm test           # 149 tests, 17 files, node:test through tsx
+npm test           # 202 tests, node:test through tsx — the whole suite
+npm run test:api   # route contract: paths, methods, gates, validation, shapes
+npm run test:queue # render watchdog rules + crash recovery + child-process timeouts
+npm run test:backup# backup, verification, restore and retention
+npm run test:ui    # React pages in jsdom: render, navigation, Studio gate
 npm run typecheck  # tsc --noEmit over server, client and tests
 npm run build      # production client build
 ```
 
-Baseline on this branch: **149 passing, 0 failing**, typecheck clean, build clean.
+Baseline on this branch: **202 passing, 0 failing**, typecheck clean, build clean.
 
 ## What the suite covers
 
@@ -29,13 +33,22 @@ Baseline on this branch: **149 passing, 0 failing**, typecheck clean, build clea
 | `render/caption-contrast.test.ts` | Caption contrast measured on real painted frames at 1080×1920 |
 | `branding.test.ts` | Brand tokens → render branding |
 | `voiceover.test.ts` | Script generation, freshness, copyable format |
+| `routes/api-contract.test.ts` | 95 route entries: method, path, 401/403 by role, validation, response shapes, middleware order, each router alone and in the whole app |
+| `render/watchdog.test.ts` | Stall detection, per-stage timeouts, single abort per job, configurable limits |
+| `render/queue-reliability.test.ts` | One active render per lesson, crash recovery, partial-file sweep, real ffmpeg timeout, finished files preserved |
+| `ops/backup.test.ts` | Consistent snapshot, atomic set, integrity/hash verification, retention, restore refusal paths |
+| `ui/regression.test.ts` | Home, Explore, Roadmaps, lesson reader, My Learning, Sign-in, Studio gate and dashboard in jsdom; public pages expose no Studio controls |
 
 ## What is *not* covered automatically
 
-- Screen layout and Studio flows (no DOM test harness). Verified by hand or with the preview
-  tools during a change.
-- Actual encoding on every profile: the pipeline is exercised by real renders, not by tests,
-  because encoding dominates runtime. A rendering change must be verified by rendering.
+- **Pixels and layout.** `test:ui` runs the real components in jsdom: routing, data rendering and
+  permission gates. It does not apply CSS, measure contrast or paint. Visual changes still need the
+  preview or a screenshot check.
+- **Actual encoding on every profile.** Encoding dominates runtime; the queue tests cover the
+  mechanics (timeouts, abort, partial files) with one real ffmpeg call, and a real render verifies
+  the pipeline. A rendering change must be verified by rendering.
+- **Backups against production data.** The backup suite uses synthetic trees; the restore drill in
+  `docs/operations/backup-and-recovery.md` is the production procedure.
 
 ## Adding tests
 

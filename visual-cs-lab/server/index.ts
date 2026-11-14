@@ -9,38 +9,14 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
 import { assertFontsLoaded } from './render/typography.ts';
-import { resumeOnBoot } from './render/jobs.ts';
+import { resumeOnBoot, startWatchdog } from './render/jobs.ts';
 import { ensureDerivedContent } from './content-bootstrap.ts';
-
-import { attachUser } from './auth.ts';
-import { adminApi } from './admin-api.ts';
-import { publicApi } from './public-api.ts';
-import { systemRouter } from './routes/system.ts';
-import { contentRouter } from './routes/content.ts';
-import { previewRouter } from './routes/preview.ts';
-import { narrationRouter } from './routes/narration.ts';
-import { brandRouter } from './routes/brand.ts';
-import { createRouter } from './routes/create.ts';
-import { rendersRouter } from './routes/renders.ts';
+import { createApiApp } from './app.ts';
 
 const PORT = Number(process.env.PORT || 3000);
-const app = express();
-app.use(express.json({ limit: '3mb' }));
-// Every request knows who is asking; each protected route then decides.
-app.use(attachUser);
-// Public learning platform: published content only, learner writes gated.
-app.use('/api', publicApi);
-// Admin Studio: role-gated per route.
-app.use('/api/admin', adminApi);
-// Studio domains, one router each: metadata, content, previews, narration,
-// branding and thumbnails, the Create flow, then renders and publishing.
-app.use('/api', systemRouter);
-app.use('/api', contentRouter);
-app.use('/api', previewRouter);
-app.use('/api', narrationRouter);
-app.use('/api', brandRouter);
-app.use('/api', createRouter);
-app.use('/api', rendersRouter);
+// Middleware order and every API router live in `app.ts`, so the route contract
+// tests exercise exactly the application that is served here.
+const app = createApiApp();
 
 /* -------------------------------------------------------------------- client */
 
@@ -88,6 +64,9 @@ async function start() {
   }
 
   resumeOnBoot();
+  // The queue is one sequential worker; the watchdog is what notices when that
+  // one worker stops making progress and frees the queue behind it.
+  startWatchdog();
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Visual CS Lab listening on http://0.0.0.0:${PORT}`);
   });

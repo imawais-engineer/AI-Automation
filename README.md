@@ -97,7 +97,17 @@ npm run build
 
 Tests cover algorithm output against hand-checked expectations, trace determinism, frame
 allocation, caption contrast at 1080×1920, quality-report parsing, video captions,
-publishing copy, branding and voice-over.
+publishing copy, branding and voice-over — plus the API contract of every route, the render
+queue's watchdog and crash recovery, backup/restore, and the public pages in a DOM harness.
+Focused runs: `npm run test:api`, `test:queue`, `test:backup`, `test:ui`.
+
+Operations guides (queue reliability, backup and recovery, security review, production
+readiness) live in [docs/operations/](docs/operations/). Backups:
+
+```bash
+npm run backup -- create --media full   # database + media into DATA_DIR/backups
+npm run backup -- verify <set>
+```
 
 ## Deployment
 
