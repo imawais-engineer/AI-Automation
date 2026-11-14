@@ -1,185 +1,154 @@
-# AI Automation Workflows Portfolio
+# Visual CS Lab
 
-Practical automation demos and workflow templates built with **n8n**, **Make.com**, **Zapier**, **Google Workspace**, **CRMs**, **APIs**, and **AI agents**.
+**Computer science, one concept at a time.**
 
-These workflows are designed to reduce manual work, connect business tools, improve lead handling, automate reporting, and support small business operations.
+An interactive Computer Science learning platform built around structured tutorials,
+executable examples, verified algorithm traces and visual explanations — plus a Studio
+that turns those same traces into branded MP4 lessons.
+
+The application lives in [`visual-cs-lab/`](visual-cs-lab/). This repository root holds the
+product documentation, the security policy and the CI workflow.
 
 ---
 
-## Disclaimer
+## What the product is
 
-These are **demonstration workflows** built on sample data to show how I design and ship automations. Client work and client data stay private and are not included here.
+Two audiences, one codebase, one source of truth for every number shown on screen:
 
----
+| Surface | Who it is for | What it does |
+| --- | --- | --- |
+| **Learning platform** (`/`, `/explore`, `/roadmaps`, `/learn/:slug`, `/my-learning`) | Learners | Tutorials in plain language, worked examples, real execution output, complexity analysis, practice questions, and a short animation of the trace |
+| **Creator Studio** (`/admin/*`) | Editors and reviewers | Content management, storyboard editing, narration, render queue, quality reports, per-platform captions, publishing queue |
+| **Rendering engine** | Internal | Verified trace → animation timeline → Skia frames → H.264 MP4 → automated quality gate → thumbnail |
 
-## Featured: Visual CS Lab — a runnable app
+Every value in an animation comes from a real algorithm run. A render is only marked
+`done` after the encoded file passes the quality checks that measure the file itself.
 
-[`visual-cs-lab/`](visual-cs-lab/) is the installable application in this repository: a
-Computer Science learning platform whose Studio turns a verified algorithm trace into a
-branded 1080×1920 MP4 short, with a quality gate on every export.
+## Key capabilities
+
+- **Verified traces** — 27 algorithm modules (arrays, linked lists, stacks, queues, hash
+  tables, trees, heaps, graphs, sorts, searching, recursion, dynamic programming,
+  patterns) each produce a deterministic, testable event trace.
+- **One trace, two consumers** — the same trace powers the interactive lesson animation
+  and the rendered video; neither re-implements the algorithm.
+- **Content-driven timing** — a video is as long as its beats and narration need; no fixed
+  duration slot.
+- **Five output profiles** — Preview 540×960, HD Shorts 1080×1920, Master 1080×1920,
+  4K vertical 2160×3840 and HD Long 1920×1080.
+- **Quality gate** — container, codec, pixel format, resolution, even dimensions, audio,
+  frame-accurate duration and sampled frame checks run on the finished MP4.
+- **Roles** — learner, editor, reviewer and admin, enforced per action on the server.
+- **Content** — 28 concepts, 28 lessons (23 published), 1 roadmap with 4 modules,
+  84 slides across 11 decks.
+
+## Technology stack
+
+Node.js 20.19+ · TypeScript · Express 4 · React 18 · Vite 6 · React Router 6 ·
+SQLite via `better-sqlite3` · `@napi-rs/canvas` (Skia) for frame painting · `ffmpeg-static`
+for encoding · `tsx` to run TypeScript on the server. No browser renderer, no database
+server, no external asset pipeline.
+
+## Installation
 
 ```bash
 git clone https://github.com/imawais-engineer/AI-Automation.git
 cd AI-Automation/visual-cs-lab
 npm ci
-npm run dev        # http://localhost:3000
+npm run dev          # API + UI + video downloads on http://localhost:3000
 ```
 
-Node.js 20.19+ is the only prerequisite — ffmpeg and the video fonts ship with the
-project, and storage is SQLite. Setup, environment variables, the render pipeline and the
-API are documented in [visual-cs-lab/README.md](visual-cs-lab/README.md).
+`ffmpeg` ships as a package and the video fonts are committed, so Node.js is the only
+prerequisite.
 
----
+## Development commands
 
-## What This Repository Shows
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Server + Vite middleware on port 3000 (live reload) |
+| `npm run build` | Production client build into `dist/` |
+| `npm start` | Run the server (serves `dist/` when `NODE_ENV=production`) |
+| `npm test` | 149 tests across algorithms, traces, rendering, quality and voice-over |
+| `npm run typecheck` | `tsc --noEmit` over server, client and tests |
 
-This portfolio demonstrates:
+## Environment configuration
 
-- **Workflow automation design** – Building multi-step automations with trigger → action → notification patterns
-- **AI agent integration** – Using OpenAI, Claude, and Gemini to enhance workflows
-- **CRM and lead automation** – Capturing, qualifying, and managing leads automatically
-- **Google Workspace automation** – Automating Gmail, Sheets, Docs, Drive, Forms, and Calendar
-- **API and webhook integrations** – Connecting business tools and syncing data
-- **Email and reporting automation** – Generating reports and sending notifications
-- **Error handling and monitoring** – Building reliable automations with error alerts
+Every variable is optional; the app boots, renders and passes its tests with none of them.
+Copy `visual-cs-lab/.env.example` to `.env` to override. The ones that change behaviour:
 
----
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `3000` | Server port |
+| `DATA_DIR` | `/tmp/visual-cs-lab` | SQLite database |
+| `MEDIA_DIR` | `$DATA_DIR/media` | Rendered MP4s, thumbnails, clips, audio |
+| `DEEPGRAM_API_KEY` | — | Voice-over narration |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | — | Optional OpenAI-compatible drafting |
 
-## Tools & Platforms
+Secrets are read from the environment only; nothing is committed. See
+[docs/development/environment.md](docs/development/environment.md).
 
-### Automation Platforms
-- **n8n** – Open-source workflow automation
-- **Make.com** – Visual automation builder
-- **Zapier** – No-code automation platform
+## Testing
 
-### Google Workspace
-- Gmail, Google Sheets, Google Docs, Google Drive, Google Forms, Google Calendar
-
-### CRM & Data Platforms
-- HubSpot, Airtable, Notion, Pipedrive, GoHighLevel
-
-### AI APIs
-- OpenAI (GPT), Claude (Anthropic), Google Gemini
-
-### Communication Tools
-- Telegram, Slack, Discord
-
-### Additional
-- REST APIs, Webhooks, Python, JavaScript
-
----
-
-## Workflow Demo Projects
-
-| # | Workflow | Status | Demo | Notes |
-|---|----------|--------|------|-------|
-| 1 | AI Lead Capture & Qualification | Planned | [Demo](https://youtu.be/rynkF-VkaOY) | Form → AI Scoring → CRM → Email |
-| 2 | Google Workspace Reporting | Planned | [Demo](#) | Sheets → Report → Docs → Email |
-| 3 | CRM Follow-Up Automation | Planned | [Demo](#) | Lead Entry → Task Creation → Reminders |
-| 4 | AI Email Assistant | Planned | [Demo](#) | Gmail → AI Categorization → Draft Reply |
-| 5 | Telegram / Slack AI Assistant | Planned | [Demo](#) | Chat Bot → AI Response → Data Logging |
-| 6 | Social Media Content Automation | Planned | [Demo](#) | Ideas → AI Captions → Content Organization |
-| 7 | Appointment Booking & Reminders | Planned | [Demo](#) | Form → Calendar → Confirmations → Reminders |
-| 8 | Workflow Debugging & Error Handling | Planned | [Demo](#) | Failed Step → Alert → Error Logging |
-
----
-
-## My Automation Process
-
-1. **Understand** – Map the current manual process
-2. **Identify** – Find repetitive and time-consuming steps
-3. **Design** – Plan the workflow logic (triggers, conditions, actions)
-4. **Choose tools** – Select the right platform (n8n, Make, Zapier)
-5. **Build** – Create the workflow with proper error handling
-6. **Test** – Run with sample data to verify output
-7. **Monitor** – Add error alerts and logging
-8. **Document** – Write setup guides and workflow explanations
-9. **Demo** – Record a video showing the workflow in action
-10. **Handover** – Prepare materials for client implementation
-
----
-
-## Example Client Problems These Workflows Solve
-
-- ✓ Manual lead entry from forms
-- ✓ Missed follow-ups and cold leads
-- ✓ Repetitive email replies
-- ✓ Manual spreadsheet updates
-- ✓ Slow report generation
-- ✓ CRM data syncing delays
-- ✓ Social media content preparation
-- ✓ Appointment scheduling chaos
-- ✓ Internal task routing errors
-- ✓ Unmonitored workflow failures
-
----
-
-## How to View the Demos
-
-Each workflow folder contains:
-
-- **README.md** – Workflow explanation and use case
-- **workflow-summary.md** – Step-by-step breakdown
-- **tools-used.md** – Specific tool configurations
-- **setup-guide.md** – Implementation instructions
-- **screenshots/** – Visual workflow diagrams
-- **demo-video-link.md** – Link to demo recording
-- **sample-data/** – Test data to run the workflow
-- **exported-workflow/** – Workflow export files
-
----
-
-## Workflow Folder Structure
-
-```
-workflows/
-├── 01-ai-lead-qualification/
-├── 02-google-workspace-reporting/
-├── 03-crm-follow-up-automation/
-├── 04-ai-email-assistant/
-├── 05-telegram-slack-ai-assistant/
-├── 06-social-media-content-automation/
-├── 07-appointment-booking-reminders/
-└── 08-error-handling-monitoring/
+```bash
+cd visual-cs-lab
+npm test
+npm run typecheck
+npm run build
 ```
 
----
+Tests cover algorithm output against hand-checked expectations, trace determinism, frame
+allocation, caption contrast at 1080×1920, quality-report parsing, video captions,
+publishing copy, branding and voice-over.
+
+## Deployment
+
+The repository ships a single-container production image:
+
+```bash
+cd visual-cs-lab
+docker build -t visual-cs-lab .
+docker run -p 3000:3000 -v vcsl-data:/data visual-cs-lab
+```
+
+The container runs `npm run build` at image build time and serves the compiled client from
+`dist/` plus the API from Express, with SQLite and media on the `/data` volume. Details:
+[docs/development/deployment.md](docs/development/deployment.md).
+
+## Project structure
+
+```
+.
+├── docs/                      product, architecture and engineering documentation
+├── .github/workflows/         secret scanning (gitleaks)
+├── visual-cs-lab/
+│   ├── server/
+│   │   ├── algorithms/        verified algorithm implementations + traces
+│   │   ├── anim/              visualization primitives and frame painting
+│   │   ├── render/            scene planning, encoding, validation, thumbnails
+│   │   ├── routes/            Studio HTTP surface, one domain per router
+│   │   ├── tts/               narration providers
+│   │   ├── db.ts              schema and migrations
+│   │   ├── scenes.ts          storyboard model and validation
+│   │   ├── admin-api.ts       role-gated Studio administration
+│   │   ├── public-api.ts      published content and learner writes
+│   │   └── index.ts           wiring: middleware, routers, client, boot
+│   ├── src/                   React client (public site + Studio)
+│   └── public/                fonts and static assets
+├── CONTRIBUTING.md
+├── SECURITY.md
+└── LICENSE
+```
 
 ## Documentation
 
-- **[Automation Process](docs/automation-process.md)** – How I approach workflow design
-- **[Tools Stack](docs/tools-stack.md)** – Detailed platform comparisons
-- **[Client Use Cases](docs/client-use-cases.md)** – Real-world business problems
-- **[Upwork Portfolio Notes](docs/upwork-portfolio-notes.md)** – Portfolio positioning
+- [Mission](docs/product/mission.md) · [Learning experience](docs/product/learning-experience.md) · [Curriculum](docs/product/curriculum-structure.md)
+- [Architecture](docs/architecture/overview.md) · [Repository audit](docs/architecture/repository-audit.md) · [Visualization engine](docs/architecture/visualization-engine.md) · [Rendering pipeline](docs/architecture/rendering-pipeline.md) · [Database](docs/architecture/database.md)
+- [Setup](docs/development/setup.md) · [Environment](docs/development/environment.md) · [Testing](docs/development/testing.md) · [Deployment](docs/development/deployment.md) · [Contributing](docs/development/contributing.md)
 
----
+## Contributing
 
-## Who This Is For
-
-- **Small Business Owners** – Automate repetitive operations
-- **Agencies** – Build automation services for clients
-- **SaaS Teams** – Connect tools and improve workflows
-- **Creators & Consultants** – Manage leads and content at scale
-- **Operations Teams** – Reduce manual data work
-
----
-
-## Contact & Hire Me
-
-If you have a manual process involving forms, spreadsheets, emails, CRMs, calendars, or repeated app-to-app data movement, I can help design and build an automation.
-
-- **Portfolio:** [imawais.engineer](https://imawais.engineer)
-- **Upwork:** [Hire me on Upwork](https://www.upwork.com/freelancers/awaisai)
-- **Fiverr:** [Order on Fiverr](https://www.fiverr.com/mawais_pk)
-- **LinkedIn:** [Connect on LinkedIn](https://linkedin.com/in/imawais-engineer)
-- **GitHub:** [View my GitHub projects](https://github.com/imawais-engineer)
-
----
+Read [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test`, `npm run typecheck` and
+`npm run build` inside `visual-cs-lab/` before opening a pull request.
 
 ## License
 
-MIT License – See [LICENSE](LICENSE) file for details.
-
----
-
-**Last Updated:** June 2026
+MIT — see [LICENSE](LICENSE).

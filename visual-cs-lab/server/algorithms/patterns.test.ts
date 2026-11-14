@@ -32,7 +32,7 @@ test('the strings validator rejects a wrong vowel count', () => {
 });
 
 test('two pointers finds the pair in three sums', () => {
-  const config = { kind: 'two-pointers', array: [2, 5, 8, 11, 14, 18], target: 19, expect: { pair: [5, 14] as [number, number], comparisons: 3 } };
+  const config = { kind: 'two-pointers' as const, array: [2, 5, 8, 11, 14, 18], target: 19, expect: { pair: [5, 14] as [number, number], comparisons: 3 } };
   const trace = traceTwoPointers(config);
   assert.equal(trace.steps.length, 3);
   assert.deepEqual(validateTwoPointersTrace(trace, config).failures, []);
@@ -44,14 +44,14 @@ test('two pointers finds the pair in three sums', () => {
 });
 
 test('two pointers reports no pair when the target is impossible', () => {
-  const config = { kind: 'two-pointers', array: [1, 2, 3], target: 99, expect: { pair: null } };
+  const config = { kind: 'two-pointers' as const, array: [1, 2, 3], target: 99, expect: { pair: null } };
   const trace = traceTwoPointers(config);
   assert.deepEqual(validateTwoPointersTrace(trace, config).failures, []);
   assert.equal(trace.meta.result.title, 'No pair');
 });
 
 test('the sliding window keeps its sum under the limit and finds the longest run', () => {
-  const config = { kind: 'sliding-window', array: [1, 2, 3, 1, 1, 1, 4, 2], limit: 10, expect: { longest: 6 } };
+  const config = { kind: 'sliding-window' as const, array: [1, 2, 3, 1, 1, 1, 4, 2], limit: 10, expect: { longest: 6 } };
   const trace = traceSlidingWindow(config);
   assert.deepEqual(validateSlidingWindowTrace(trace, config).failures, []);
   assert.equal(trace.meta.result.title, 'longest 6');
@@ -67,7 +67,7 @@ test('the sliding window keeps its sum under the limit and finds the longest run
 });
 
 test('prefix sums answers the range with two lookups', () => {
-  const config = { kind: 'prefix-sums', array: [3, 1, 4, 1, 5, 9], query: { left: 2, right: 4 }, expect: { sum: 10 } };
+  const config = { kind: 'prefix-sums' as const, array: [3, 1, 4, 1, 5, 9], query: { left: 2, right: 4 }, expect: { sum: 10 } };
   const trace = tracePrefixSums(config);
   assert.deepEqual(validatePrefixSumsTrace(trace, config).failures, []);
   assert.equal(trace.steps.length, config.array.length + 2);
@@ -78,14 +78,14 @@ test('prefix sums answers the range with two lookups', () => {
 });
 
 test('selection sort settles every position with one swap per pass', () => {
-  const config = { kind: 'selection-sort', array: [5, 2, 8, 1, 9, 3], expect: { sorted: [1, 2, 3, 5, 8, 9], comparisons: 15, swaps: 3 } };
+  const config = { kind: 'selection-sort' as const, array: [5, 2, 8, 1, 9, 3], expect: { sorted: [1, 2, 3, 5, 8, 9], comparisons: 15, swaps: 3 } };
   const trace = traceSelectionSort(config);
   assert.deepEqual(validateSelectionTrace(trace, config).failures, []);
   assert.deepEqual(inspectStepsTrace(trace).failures, []);
 });
 
 test('the selection validator rejects a trace that ends unsorted', () => {
-  const config = { kind: 'selection-sort', array: [3, 1, 2] };
+  const config = { kind: 'selection-sort' as const, array: [3, 1, 2] };
   const trace = traceSelectionSort(config);
   const tampered = { ...trace, steps: trace.steps.slice(0, -1) };
   assert.equal(validateSelectionTrace(tampered, config).ok, false);

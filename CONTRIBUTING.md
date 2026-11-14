@@ -1,75 +1,63 @@
-# Contributing to AI Automation Workflows
+# Contributing to Visual CS Lab
 
-Thank you for your interest in this portfolio project!
+Thanks for helping improve a Computer Science learning platform where every number on
+screen comes from a real algorithm run.
 
-## How to Use This Repository
+## Ground rules
 
-This is a **portfolio showcase** demonstrating automation workflow design and implementation. You can:
+- **Never invent a result.** A displayed value must originate from an executed trace.
+- **Preserve the separation of concerns** described in
+  [docs/architecture/overview.md](docs/architecture/overview.md): algorithms do not paint,
+  the renderer does not decide correctness, the client does not re-implement an algorithm.
+- **Do not commit data or media**: no `.db` files, no rendered MP4s, no `.env`.
+- **Keep the app bootable.** A change that leaves the dev server unable to start is not
+  ready for review.
 
-- **Reuse and adapt** the workflow designs
-- **Test** the workflows in your own n8n, Make, or Zapier instance
-- **Adapt** the workflows for your own use cases
-- **Share** feedback on the portfolio
+## Development
 
-## Using These Workflows
+```bash
+cd visual-cs-lab
+npm ci
+npm run dev
+```
 
-### For Reference
-- Review the README files in each workflow folder
-- Study the workflow structure and logic
-- Check the screenshots and setup guides
+Full setup, environment and troubleshooting notes:
+[docs/development/setup.md](docs/development/setup.md).
 
-### For Testing
-1. Set up your own n8n instance or Make.com/Zapier account
-2. Export the workflow files from the exported-workflow folder
-3. Import into your platform
-4. Use the sample data provided
-5. Adjust credentials and tool connections as needed
+## Before you open a pull request
 
-### For Adaptation
-- Modify workflows for your specific business needs
-- Substitute your CRM, email provider, or communication tool
-- Add additional AI models or APIs
-- Extend error handling as required
+Run all three inside `visual-cs-lab/` and paste the outcome in the PR description:
 
-## Reporting Issues
+```bash
+npm test           # 149 tests: algorithms, traces, rendering, quality, captions
+npm run typecheck  # tsc --noEmit
+npm run build      # production client build
+```
 
-If you find an error in the workflow documentation or sample data:
+Then check the behaviour in the running app:
 
-1. Open an issue with a clear description
-2. Include which workflow and step has the issue
-3. Provide screenshots or sample data if relevant
+- Public routes you touched render real content (not an empty shell).
+- Studio routes you touched still work with an editor or admin account.
+- A rendering change was verified by rendering a lesson, not only by reading the diff.
+- If you changed the storyboard or animation model, note whether existing lessons need a
+  storyboard rebuild from the Studio (Brand → regenerate).
 
-## Suggestions & Feedback
+## Pull request conventions
 
-We welcome suggestions for:
+- Conventional commit titles: `feat(scene): …`, `fix(render): …`, `docs: …`,
+  `refactor(routes): …`.
+- One concern per pull request. Schema changes ship with a migration in `server/db.ts`.
+- Describe what you verified and how. Unverified claims are rejected, not merged.
 
-- New workflow ideas
-- Improvements to existing workflows
-- Better documentation
-- Tool integrations to showcase
+## Adding a lesson
 
-Please open an issue to discuss.
+Lessons are content, not code: create it in the Studio (`/admin/content`), write the
+sections and practice questions, generate the storyboard, then render. A new *algorithm*
+is code — see [docs/architecture/visualization-engine.md](docs/architecture/visualization-engine.md)
+for the trace contract and the test expectations.
 
-## Workflow Submission Guidelines
+## Reporting problems
 
-If you'd like to contribute a new workflow:
-
-1. Follow the folder structure: `workflows/NN-workflow-name/`
-2. Include all standard files: README, setup guide, tools used, sample data
-3. Add screenshots showing the workflow configuration
-4. Document any API keys or credentials needed (without revealing actual keys)
-5. Test the workflow thoroughly
-6. Create a pull request with a clear description
-
-## Code of Conduct
-
-- Be respectful and professional
-- Focus on helping others ship reliable automation
-- Do not share confidential client work or sensitive data
-- Do not claim ownership of workflows you did not create
-
-## Questions?
-
-Refer to the documentation in the `docs/` folder or open an issue.
-
-Thank you for contributing!
+Security issues: follow [SECURITY.md](SECURITY.md) — never a public issue.
+Everything else: open an issue with steps to reproduce and the lesson or render id that
+shows the problem.
