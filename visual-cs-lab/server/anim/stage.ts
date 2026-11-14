@@ -1,0 +1,1575 @@
+/**
+ * Shared visual language of the motion engine: stage, 2.5D objects, cameras and
+ * the on-screen overlays.
+ *
+ * The whole video is drawn in a 1080 × 1920 design space and scaled to whatever
+ * the output profile asks for, so a 540 × 960 preview is the same composition as
+ * the 1080 × 1920 export.
+ *
+ * Three typographic roles carry the hierarchy — Space Grotesk for headlines, Inter
+ * for explanation, JetBrains Mono for code, indices and state — and every overlay
+ * owns a band of the frame, so copy can never drift into the animation area.
+ */
+
+import type { SKRSContext2D } from '@napi-rs/canvas';
+
+import { clamp01, easeInCubic, easeOutCubic, lerp, track } from './easing.ts';
+import { BRAND_DEFAULTS } from '../branding.ts';
+import { recordObject, recordPointer, recordText, type Rect } from './audit.ts';
+import { type Side, anchorEdgePoint, chipEdgePoint, overlapArea, placeChip } from './anchors.ts';
+import { drawText, ellipsize, fitText, textWidth } from '../render/layout.ts';
+import { hexToRgb, mix, mixHex, rgba, roundRect } from '../render/paint.ts';
+import { fontString, type FontRole } from '../render/typography.ts';
+
+export type Dims = { width: number; height: number };
+export type Camera = { x: number; y: number; zoom: number };
+
+export type Palette = {
+  bg: string;
+  panel: string;
+  ink: string;
+  accent: string;
+  coral: string;
+  violet: string;
+  /** True when the surface is darker than its ink (the original stage). */
+  dark: boolean;
+  /**
+   * The card colour drawn behind body text. A dark theme keeps the original
+   * near-black strip; a light theme needs a paper-coloured strip, otherwise dark
+   * ink would sit on a dark card.
+   */
+  scrim: string;
+};
+
+/** Relative luminance, enough to decide which side of the palette is the surface. */
+function luminance(hex: string): number {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+export type BrandLike = {
+  name: string;
+  accent: string;
+  background: string;
+  panel: string;
+  ink: string;
+  watermark: string;
+  outro: string;
+  /** The personal identity; the renderer falls back to the brand defaults. */
+  presenter?: string;
+  role?: string;
+  closing?: string;
+  /** What the viewer should do next, and where to find the presenter. */
+  cta?: string;
+  /** The two social profiles the outro carries. */
+  instagram?: string;
+  linkedin?: string;
+};
+
+export function paletteOf(brand: BrandLike): Palette {
+  const bg = brand.background || '#0b1220';
+  const ink = brand.ink || '#e6edf7';
+  const dark = luminance(bg) < luminance(ink);
+  return {
+    bg,
+    panel: brand.panel || '#141c2e',
+    ink,
+    accent: brand.accent || '#22d3ee',
+    coral: '#ff8a70',
+    violet: '#a78bfa',
+    dark,
+    // A dark theme keeps the exact strip the renderer shipped with. The light
+    // scrim must be hex: every overlay passes it through `rgba()`, which cannot
+    // read `rgb(...)` and falls back to near-black behind dark ink.
+    scrim: dark ? '#050a12' : mixHex(bg, '#ffffff', 0.82)
+  };
+}
+
+/**
+ * Faded ink for secondary copy.
+ *
+ * The alphas were tuned on the dark stage, where half-strength light ink still
+ * reads. The same fade on a paper surface falls under a readable contrast, so a
+ * light theme lifts every secondary tone toward full ink; genuinely dim states
+ * (below 0.4) keep their value, because there the fade carries meaning.
+ */
+export function inkTone(pal: Palette, alpha: number): string {
+  const a = clamp01(alpha);
+  if (pal.dark || a < 0.4) return rgba(pal.ink, a);
+  return rgba(pal.ink, clamp01(1 - (1 - a) * 0.42));
+}
+
+/**
+ * An accent used as text. Accents are picked to glow on a dark stage; on paper the
+ * same hue is darkened toward the ink until a label or a value stays readable.
+ */
+export function accentTone(pal: Palette, accent: string, alpha = 1): string {
+  return rgba(pal.dark ? accent : mix(accent, pal.ink, 0.45), alpha);
+}
+
+export type ChipPaint = { surface: string; ink: string; stroke: string };
+
+/**
+ * Surface and ink for an unfilled label chip.
+ *
+ * A dark stage keeps the night pill with accent-coloured text. A light theme draws
+ * a paper pill with tinted dark ink instead: the night pill left dark ink — what a
+ * marker, callout, pointer or toast label inherits — sitting on a near-black fill,
+ * where it could not be read at all.
+ */
+export function chipPaint(pal: Palette, accent: string): ChipPaint {
+  if (pal.dark) return { surface: rgba('#060b14', 0.9), ink: accent, stroke: rgba(accent, 0.6) };
+  return { surface: rgba(pal.scrim, 0.97), ink: mix(accent, pal.ink, 0.55), stroke: rgba(accent, 0.8) };
+}
+
+export const DESIGN_W = 1080;
+export const DESIGN_H = 1920;
+export const SAFE = 64;
+
+/** The landscape (16:9) chrome design space: overlays are set in real 1080p pixels. */
+export const LAND_W = 1920;
+export const LAND_H = 1080;
+
+/** A landscape frame is wider than it is tall; every layout decision follows it. */
+export function isLandscape(dims: Dims): boolean {
+  return dims.width > dims.height;
+}
+
+/**
+ * Overlay scale: chrome design px → output px. A vertical frame is designed on
+ * 1080 × 1920, a landscape one on 1920 × 1080, so the same type sizes read at the
+ * same proportion on both.
+ */
+export function chromeScale(dims: Dims): number {
+  return dims.width / (isLandscape(dims) ? LAND_W : DESIGN_W);
+}
+
+/**
+ * Stage scale: the animation's own 1080-wide stage space. A landscape frame has
+ * less height to give the stage, so it is zoomed a little past the width-matched
+ * size and the bands above and below it keep clear.
+ */
+export const LAND_ZOOM = 1.3;
+
+/** Where the stage's own origin sits in the frame. */
+export function stageCenter(dims: Dims): { x: number; y: number } {
+  return {
+    x: dims.width / 2,
+    y: isLandscape(dims) ? dims.height * 0.55 : dims.height / 2
+  };
+}
+
+/**
+ * `fit` lets a short hand the landscape frame its own stage scale: a wide row of
+ * cells fills the frame, while a tall stack has to sit smaller in the middle.
+ */
+export function stageScale(dims: Dims, fit = 1): number {
+  return isLandscape(dims) ? (dims.height / LAND_H) * LAND_ZOOM * fit : dims.width / DESIGN_W;
+}
+
+/** The widest a stage may get before it starts crowding the caption strip. */
+export const LAND_MAX_FIT = 1.8;
+
+/**
+ * How much a landscape frame has to shrink a short's own stage bounds (`w` × `h`
+ * design units) so the graphic fills the width without running into the banner
+ * above it or the caption strip below it. A vertical frame is left alone.
+ */
+export function fitForStage(dims: Dims, bounds: { w: number; h: number }): number {
+  if (!isLandscape(dims)) return 1;
+  const k = stageScale(dims, 1);
+  const bands = bandsOf(dims);
+  const chrome = chromeScale(dims);
+  const center = stageCenter(dims);
+  const up = center.y - (bands.operationBottom + 12) * chrome;
+  const down = dims.height - (bands.captionGap + 210) * chrome - center.y;
+  const availableHeight = Math.max(80, Math.min(up, down));
+  // Markers, callouts and pointer labels sit outside the nodes themselves, so the
+  // fit leaves a band above and below for them.
+  const byHeight = (availableHeight * 2) / Math.max(1, bounds.h + 150);
+  const byWidth = (dims.width * 0.94) / Math.max(1, bounds.w);
+  return Math.min(LAND_MAX_FIT, byHeight, byWidth) / k;
+}
+/**
+ * The right-hand rail the platform overlays with its like / comment / share
+ * buttons, in design pixels. Copy and pills stay out of it.
+ */
+export const RAIL = 96;
+
+/**
+ * The frame's overlay grid, in design pixels. Each overlay is only allowed inside
+ * its own band, which is what keeps a banner, a result card, a pointer label and
+ * the caption strip from ever landing on top of each other.
+ */
+export const BAND = {
+  headerTop: 46,
+  headerRule: 104,
+  kicker: 150,
+  operationTop: 196,
+  operationBottom: 306,
+  hookTop: 214,
+  hookBottom: 760,
+  resultTop: 336,
+  resultBottom: 508,
+  captionGap: 480,
+  footer: 78
+};
+
+/**
+ * The same grid on a 1920 × 1080 frame, in real 1080p pixels. The stage owns the
+ * middle of the frame, so the hook band sits above it and the caption strip below.
+ */
+export const LAND_BAND = {
+  headerTop: 34,
+  headerRule: 78,
+  kicker: 104,
+  operationTop: 136,
+  operationBottom: 260,
+  hookTop: 146,
+  hookBottom: 310,
+  resultTop: 236,
+  resultBottom: 380,
+  captionGap: 62,
+  footer: 46
+};
+
+export type Bands = typeof BAND;
+
+/** The overlay grid of the frame this `dims` describes. */
+export function bandsOf(dims: Dims): Bands {
+  return isLandscape(dims) ? LAND_BAND : BAND;
+}
+
+/**
+ * How much the vertical rhythm of the full-frame compositions is compressed on a
+ * landscape frame: the same stack of blocks, fitted into 1080 px of height.
+ */
+export function frameRhythm(dims: Dims): number {
+  return isLandscape(dims) ? 0.62 : 1;
+}
+
+/** Content box of the frame for a given width factor. */
+export function safeBox(k: number, top = 0, bottom = DESIGN_H): Rect {
+  return { x: SAFE * k, y: Math.max(0, top) * k, w: (DESIGN_W - SAFE * 2) * k, h: (bottom - top) * k };
+}
+
+/**
+ * The safe content box of this frame's design space — the box a headline is set
+ * in. It follows the frame's own orientation instead of assuming the vertical one.
+ */
+export function contentBox(dims: Dims, top = 0, bottom?: number): Rect {
+  const k = chromeScale(dims);
+  const land = isLandscape(dims);
+  const designH = land ? LAND_H : DESIGN_H;
+  const designW = land ? LAND_W : DESIGN_W;
+  const low = Math.min(bottom ?? designH, designH);
+  return { x: SAFE * k, y: Math.max(0, top) * k, w: (designW - SAFE * 2) * k, h: Math.max(0, low - top) * k };
+}
+
+export function font(size: number, weight = 400, mono = false): string {
+  return fontString(mono ? 'mono' : 'text', weight, size);
+}
+
+export function displayFont(size: number, weight = 700): string {
+  return fontString('display', weight, size);
+}
+
+/**
+ * One fitted line of text at a baseline. Long strings are cut with an ellipsis
+ * instead of running past `maxWidth`, so a watermark can never reach the frame edge.
+ */
+export function text(
+  ctx: SKRSContext2D,
+  value: string,
+  x: number,
+  y: number,
+  opts: {
+    size: number;
+    color: string;
+    weight?: number;
+    mono?: boolean;
+    display?: boolean;
+    align?: CanvasTextAlign;
+    alpha?: number;
+    maxWidth?: number;
+  }
+): number {
+  const role: FontRole = opts.display ? 'display' : opts.mono ? 'mono' : 'text';
+  const weight = opts.weight ?? 600;
+  const maxWidth = opts.maxWidth ?? DESIGN_W * 2;
+  const cut = ellipsize(ctx, value, maxWidth, role, weight, opts.size);
+  ctx.save();
+  ctx.globalAlpha = opts.alpha ?? 1;
+  ctx.font = fontString(role, weight, opts.size);
+  ctx.fillStyle = opts.color;
+  ctx.textAlign = opts.align ?? 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(cut.text, x, y);
+  ctx.restore();
+  return cut.width;
+}
+
+/** Pushes the design-space camera. Pair with `popCamera`. */
+export function pushCamera(ctx: SKRSContext2D, dims: Dims, cam: Camera, fit = 1): number {
+  const k = stageScale(dims, fit);
+  const center = stageCenter(dims);
+  ctx.save();
+  ctx.translate(center.x, center.y);
+  ctx.scale(k * cam.zoom, k * cam.zoom);
+  ctx.translate(-cam.x, -cam.y);
+  return k;
+}
+
+export function popCamera(ctx: SKRSContext2D): void {
+  ctx.restore();
+}
+
+/**
+ * Deep stage: a soft vertical gradient, a perspective floor and a single
+ * spotlight pool. The camera moves at reduced parallax so the room feels large.
+ */
+export function backdrop(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  cam: Camera,
+  pal: Palette,
+  tMs: number,
+  opts: { horizon?: number; glow?: number; fit?: number } = {}
+): void {
+  const { width: W, height: H } = dims;
+  const k = stageScale(dims, opts.fit ?? 1);
+  const horizon = opts.horizon ?? -260;
+
+  const base = ctx.createLinearGradient(0, 0, 0, H);
+  if (pal.dark) {
+    base.addColorStop(0, mix(pal.bg, '#02040a', 0.55));
+    base.addColorStop(0.55, mix(pal.bg, '#060a13', 0.2));
+    base.addColorStop(1, mix(pal.bg, '#000000', 0.35));
+  } else {
+    // A light theme keeps the same structure but darkens away from white, so the
+    // paper surface still reads as a lit room instead of washing out to blank.
+    base.addColorStop(0, mix(pal.bg, '#ffffff', 0.55));
+    base.addColorStop(0.55, mix(pal.bg, '#ffffff', 0.18));
+    base.addColorStop(1, mix(pal.bg, '#7f8a86', 0.22));
+  }
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, W, H);
+
+  const breathe = 0.7 + Math.sin(tMs / 2800) * 0.08;
+  const glow = ctx.createRadialGradient(W * 0.5, H * 0.52, 0, W * 0.5, H * 0.52, H * 0.62);
+  glow.addColorStop(0, rgba(pal.accent, 0.16 * (opts.glow ?? 1) * breathe));
+  glow.addColorStop(0.45, rgba(pal.violet, 0.05));
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // Parallax floor grid.
+  ctx.save();
+  const gridCenter = stageCenter(dims);
+  ctx.translate(gridCenter.x, gridCenter.y);
+  ctx.scale(k, k);
+  ctx.translate(-cam.x * 0.22, -cam.y * 0.28);
+
+  ctx.lineWidth = 1.4;
+  for (let i = 1; i <= 16; i++) {
+    const p = i / 16;
+    const y = horizon + Math.pow(p, 2.3) * 2300;
+    ctx.strokeStyle = rgba(pal.accent, 0.05 * (1 - p * 0.7));
+    ctx.beginPath();
+    ctx.moveTo(-1400, y);
+    ctx.lineTo(1400, y);
+    ctx.stroke();
+  }
+  for (let i = -9; i <= 9; i++) {
+    const spread = i * 190;
+    ctx.strokeStyle = rgba(pal.accent, i % 3 === 0 ? 0.055 : 0.028);
+    ctx.beginPath();
+    ctx.moveTo(0, horizon);
+    ctx.lineTo(spread, 1500);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Vignette keeps overlays readable over the glow.
+  const vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.82);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  // A light surface vignettes toward paper, not toward black: darkening the
+  // edges of a light theme would fight the dark ink drawn on top of it.
+  vignette.addColorStop(1, pal.dark ? 'rgba(0,0,0,0.6)' : rgba('#ffffff', 0.55));
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, W, H);
+}
+
+/** A glass plinth: the floor the data structure stands on. */
+export function drawPlatform(
+  ctx: SKRSContext2D,
+  opts: { x: number; y: number; w: number; pal: Palette; alpha?: number; lift?: number }
+): void {
+  const { x, y, w, pal } = opts;
+  const alpha = opts.alpha ?? 1;
+  if (alpha <= 0) return;
+  const depth = 74;
+  const lip = 26;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Light pool on the floor, under the data structure.
+  const pool = ctx.createRadialGradient(0, y + 40, 0, 0, y + 40, w * 0.72);
+  pool.addColorStop(0, rgba(pal.accent, 0.22));
+  pool.addColorStop(0.6, rgba(pal.accent, 0.06));
+  pool.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = pool;
+  ctx.beginPath();
+  ctx.ellipse(0, y + 46, w * 0.72, 120, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Top face, drawn in perspective.
+  // A light theme keeps the plinth a lit paper slab: shading it toward near-black
+  // turned the block stand into a dark band under paper blocks.
+  const topGradient = ctx.createLinearGradient(0, y - depth, 0, y);
+  topGradient.addColorStop(0, mix(pal.panel, pal.accent, pal.dark ? 0.26 : 0.3));
+  topGradient.addColorStop(1, mix(pal.panel, pal.dark ? '#050810' : pal.ink, pal.dark ? 0.5 : 0.18));
+  ctx.fillStyle = topGradient;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w - depth * 0.55, y - depth);
+  ctx.lineTo(x + depth * 0.55, y - depth);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = rgba(pal.accent, 0.45);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Front lip.
+  const lipGradient = ctx.createLinearGradient(0, y, 0, y + lip);
+  lipGradient.addColorStop(0, mix(pal.panel, pal.dark ? '#000000' : pal.ink, pal.dark ? 0.15 : 0.08));
+  lipGradient.addColorStop(1, mix(pal.panel, pal.dark ? '#000000' : pal.ink, pal.dark ? 0.72 : 0.3));
+  ctx.fillStyle = lipGradient;
+  roundRect(ctx, x, y - 6, w, lip, 10);
+  ctx.fill();
+  ctx.strokeStyle = rgba(pal.ink, 0.08);
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+export type BlockTone = 'normal' | 'active' | 'match' | 'dim' | 'ghost';
+
+export type BlockOptions = {
+  /** Top-left of the front face, in design coordinates. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  value: number | string;
+  pal: Palette;
+  tone?: BlockTone;
+  alpha?: number;
+  scale?: number;
+  glow?: number;
+  valueSize?: number;
+  /** Audit group; the value text shares it so it is not reported as a collision. */
+  group?: string;
+};
+
+/**
+ * A solid, slightly extruded block. Light comes from above: the top face is the
+ * brightest plane, the front face is a vertical gradient, the right plane falls
+ * into shadow, and a contact shadow anchors it to whatever it rests on.
+ */
+export function drawBlock(ctx: SKRSContext2D, opts: BlockOptions): void {
+  const { pal, w, h } = opts;
+  const tone = opts.tone ?? 'normal';
+  const alpha = clamp01(opts.alpha ?? 1);
+  if (alpha <= 0) return;
+
+  const group = opts.group ?? 'block';
+  const dx = Math.round(w * 0.05);
+  const dy = Math.round(h * 0.16);
+  const cx = opts.x + w / 2;
+  const cy = opts.y + h / 2;
+
+  const scale = opts.scale ?? 1;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  if (scale !== 1) {
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.translate(-cx, -cy);
+  }
+
+  // Shapes faded out are not on screen; recording them would invent collisions.
+  if (alpha >= 0.15) {
+    recordObject(ctx, group, { x: opts.x, y: opts.y - dy, w: w + dx, h: h + dy }, String(opts.value));
+  }
+
+  const glow = clamp01(opts.glow ?? 0);
+  if (glow > 0.01) {
+    const color = tone === 'match' ? pal.coral : pal.accent;
+    const halo = ctx.createRadialGradient(cx, cy, w * 0.1, cx, cy, w * 0.95);
+    halo.addColorStop(0, rgba(color, 0.3 * glow));
+    halo.addColorStop(0.5, rgba(color, 0.12 * glow));
+    halo.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, w * 0.95, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Contact shadow directly beneath the block. A light surface takes a soft one:
+  // the deep shadow that anchors a lit block on a dark stage would smear a paper one.
+  const shadow = ctx.createRadialGradient(cx, opts.y + h + 12, 4, cx, opts.y + h + 12, w * 0.62);
+  shadow.addColorStop(0, `rgba(0,0,0,${(pal.dark ? 0.52 : 0.18) * alpha})`);
+  shadow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shadow;
+  ctx.beginPath();
+  ctx.ellipse(cx, opts.y + h + 10, w * 0.6, h * 0.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Face tones. A dark stage shades toward near-black navy; a light theme shades
+  // toward the ink instead, so the block stays a paper face carrying dark ink —
+  // mixing a light panel toward navy produced a slate face whose dark value could
+  // not be read.
+  const lift = tone === 'match' ? pal.coral : tone === 'active' ? pal.violet : pal.accent;
+  const liftAmount = tone === 'match' ? 0.5 : tone === 'active' ? 0.34 : tone === 'dim' ? 0.1 : 0.16;
+  const faceTop = pal.dark
+    ? tone === 'match'
+      ? mix(pal.panel, pal.coral, 0.42)
+      : tone === 'active'
+        ? mix(pal.panel, pal.violet, 0.3)
+        : tone === 'dim'
+          ? mix(pal.panel, '#05070c', 0.25)
+          : mix(pal.panel, '#2c3c57', 0.32)
+    : mix(pal.panel, lift, liftAmount);
+  const faceBottom = pal.dark
+    ? tone === 'match'
+      ? mix(pal.panel, pal.coral, 0.06)
+      : tone === 'active'
+        ? mix(pal.panel, '#05070c', 0.5)
+        : mix(pal.panel, '#04060c', 0.62)
+    : mix(faceTop, pal.ink, tone === 'dim' ? 0.24 : 0.14);
+
+  // Right plane (shadow side).
+  ctx.fillStyle = pal.dark ? mix(faceBottom, '#000000', 0.45) : mix(faceBottom, pal.ink, 0.18);
+  ctx.beginPath();
+  ctx.moveTo(opts.x + w, opts.y);
+  ctx.lineTo(opts.x + w + dx, opts.y - dy);
+  ctx.lineTo(opts.x + w + dx, opts.y + h - dy);
+  ctx.lineTo(opts.x + w, opts.y + h);
+  ctx.closePath();
+  ctx.fill();
+
+  // Top plane (lit).
+  const topFill = ctx.createLinearGradient(opts.x, opts.y - dy, opts.x + w, opts.y);
+  topFill.addColorStop(0, mix(faceTop, '#ffffff', 0.24));
+  topFill.addColorStop(1, mix(faceTop, '#ffffff', 0.06));
+  ctx.fillStyle = topFill;
+  ctx.beginPath();
+  ctx.moveTo(opts.x, opts.y);
+  ctx.lineTo(opts.x + dx, opts.y - dy);
+  ctx.lineTo(opts.x + w + dx, opts.y - dy);
+  ctx.lineTo(opts.x + w, opts.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = rgba(pal.ink, pal.dark ? 0.16 : 0.22);
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // Front face.
+  const face = ctx.createLinearGradient(opts.x, opts.y, opts.x, opts.y + h);
+  face.addColorStop(0, faceTop);
+  face.addColorStop(1, faceBottom);
+  ctx.fillStyle = face;
+  roundRect(ctx, opts.x, opts.y, w, h, Math.round(h * 0.14));
+  ctx.fill();
+
+  const edge = tone === 'match' ? pal.coral : tone === 'active' ? pal.violet : pal.accent;
+  ctx.strokeStyle = pal.dark ? rgba(edge, tone === 'dim' ? 0.14 : 0.36) : rgba(edge, tone === 'dim' ? 0.3 : 0.6);
+  ctx.lineWidth = 2.2;
+  roundRect(ctx, opts.x, opts.y, w, h, Math.round(h * 0.14));
+  ctx.stroke();
+
+  // Inner top highlight, so the solid reads as a lit surface.
+  ctx.strokeStyle = rgba(pal.dark ? '#ffffff' : pal.ink, tone === 'dim' ? 0.06 : 0.16);
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(opts.x + w * 0.05, opts.y + 4);
+  ctx.lineTo(opts.x + w * 0.95, opts.y + 4);
+  ctx.stroke();
+
+  if (tone === 'ghost') {
+    ctx.globalAlpha = alpha * 0.35;
+  }
+
+  // A block at a few percent opacity is not readable, so it carries no value: the
+  // text would otherwise be recorded as a label sitting over the frame.
+  if (alpha < 0.15) {
+    ctx.restore();
+    return;
+  }
+
+  // The value is data, so it is set in the mono face and fitted to the face.
+  // A matched block is a light peach on a paper theme, so its value is the ink, not
+  // the near-white that reads on the dark stage's coral blend.
+  const inkColor =
+    tone === 'dim'
+      ? rgba(pal.ink, pal.dark ? 0.42 : 0.65)
+      : tone === 'match'
+        ? pal.dark
+          ? '#fff6f2'
+          : pal.ink
+        : pal.ink;
+  drawText(ctx, String(opts.value), {
+    box: { x: opts.x + w * 0.14, y: opts.y + h * 0.2, w: w * 0.72, h: h * 0.62 },
+    role: 'mono',
+    weight: 600,
+    size: opts.valueSize ?? h * 0.5,
+    minSize: h * 0.2,
+    maxLines: 1,
+    align: 'center',
+    valign: 'middle',
+    color: inkColor,
+    group,
+    truncateOk: true
+  });
+
+  ctx.restore();
+}
+
+export type AnchorLabelOptions = {
+  /** The target object's rendered bounds — recomputed every frame. */
+  anchor: Rect;
+  anchorId: string;
+  group: string;
+  label: string;
+  sub?: string;
+  pal: Palette;
+  color: string;
+  /** The frame (or overlay card) the chip must stay inside. */
+  bounds: Rect;
+  obstacles?: Rect[];
+  prefer?: Side[];
+  gap?: number;
+  filled?: boolean;
+  alpha?: number;
+  /** Draw the chip above the anchor and keep a straight stem. */
+  role?: FontRole;
+  size?: number;
+};
+
+/**
+ * A label chip attached to an anchor with a leader line and an arrow at the
+ * target. Both endpoints are derived from the anchor's current rect, so the
+ * pointer moves with the object instead of with a hand-tuned coordinate.
+ */
+export function drawAnchorLabel(ctx: SKRSContext2D, opts: AnchorLabelOptions): Rect | null {
+  const alpha = clamp01(opts.alpha ?? 1);
+  if (alpha <= 0.02) return null;
+  const size = opts.size ?? 26;
+  const role = opts.role ?? 'mono';
+  const labelW = textWidth(ctx, opts.label, role, 600, size);
+  const subW = opts.sub ? textWidth(ctx, opts.sub, 'mono', 400, size * 0.82) : 0;
+  const padX = Math.round(size * 0.85);
+  const w = Math.max(labelW, subW) + padX * 2;
+  const h = opts.sub ? size * 2.5 : size * 1.9;
+
+  const chip = placeChip({
+    anchor: opts.anchor,
+    w,
+    h,
+    bounds: opts.bounds,
+    obstacles: opts.obstacles ?? [],
+    gap: opts.gap ?? 30,
+    prefer: opts.prefer
+  });
+
+  const tail = anchorEdgePoint(opts.anchor, chip);
+  const head = chipEdgePoint(chip, opts.anchor);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = rgba(opts.color, 0.7);
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(tail.x, tail.y);
+  // Elbow when the chip had to move off the anchor's centre line.
+  if (chip.side === 'above' || chip.side === 'below') {
+    ctx.lineTo(head.x, head.y + (chip.side === 'above' ? 6 : -6));
+    ctx.lineTo(head.x, head.y);
+  } else {
+    ctx.lineTo(head.x, head.y);
+  }
+  ctx.stroke();
+
+  // Anchor dot: unambiguous proof of the exact point being marked.
+  ctx.fillStyle = opts.color;
+  ctx.beginPath();
+  ctx.arc(tail.x, tail.y, 5.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // An unfilled label is a paper pill on a light theme, so its ink stays the ink.
+  const paint = chipPaint(opts.pal, opts.color);
+  ctx.fillStyle = opts.filled ? opts.color : paint.surface;
+  roundRect(ctx, chip.x, chip.y, chip.w, chip.h, Math.round(chip.h / 2));
+  ctx.fill();
+  ctx.strokeStyle = opts.filled ? rgba('#000000', 0.18) : paint.stroke;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const ink = opts.filled ? '#06101a' : paint.ink;
+  if (opts.sub) {
+    drawText(ctx, opts.label, {
+      box: { x: chip.x + padX * 0.4, y: chip.y + chip.h * 0.14, w: chip.w - padX * 0.8, h: chip.h * 0.48 },
+      role,
+      weight: 600,
+      size: size * 0.92,
+      minSize: size * 0.62,
+      maxLines: 1,
+      align: 'center',
+      valign: 'middle',
+      color: ink,
+      group: opts.group,
+      truncateOk: true
+    });
+    drawText(ctx, opts.sub, {
+      box: { x: chip.x + padX * 0.4, y: chip.y + chip.h * 0.52, w: chip.w - padX * 0.8, h: chip.h * 0.4 },
+      role: 'mono',
+      weight: 400,
+      size: size * 0.8,
+      minSize: size * 0.55,
+      maxLines: 1,
+      align: 'center',
+      valign: 'middle',
+      color: opts.filled ? rgba('#06101a', 0.75) : rgba(ink, 0.8),
+      group: opts.group,
+      truncateOk: true
+    });
+  } else {
+    drawText(ctx, opts.label, {
+      box: { x: chip.x + padX * 0.4, y: chip.y, w: chip.w - padX * 0.8, h: chip.h },
+      role,
+      weight: 600,
+      size: size * 0.92,
+      minSize: size * 0.62,
+      maxLines: 1,
+      align: 'center',
+      valign: 'middle',
+      color: ink,
+      group: opts.group,
+      truncateOk: true
+    });
+  }
+
+  ctx.restore();
+  recordPointer(ctx, opts.group, { anchor: opts.anchorId, tail, head, target: opts.anchor });
+  return { x: chip.x, y: chip.y, w: chip.w, h: chip.h };
+}
+
+/** Rounded label used for markers, counters and callouts. */
+export function drawChip(
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  label: string,
+  opts: {
+    size?: number;
+    color: string;
+    ink?: string;
+    alpha?: number;
+    align?: 'left' | 'center' | 'right';
+    mono?: boolean;
+    weight?: number;
+    filled?: boolean;
+    padX?: number;
+    height?: number;
+    maxWidth?: number;
+    group?: string;
+    role?: FontRole;
+    /** The frame's palette, so a light theme can draw a paper pill with dark ink. */
+    pal?: Palette;
+    /** Set when a cut is expected and should not be reported by the audit. */
+    truncateOk?: boolean;
+  }
+): { width: number; height: number; text: string; left: number } {
+  const size = opts.size ?? 26;
+  const role: FontRole = opts.role ?? (opts.mono === false ? 'text' : 'mono');
+  const height = opts.height ?? Math.round(size * 2.05);
+  const alpha = clamp01(opts.alpha ?? 1);
+  const maxWidth = opts.maxWidth ?? DESIGN_W - SAFE * 2;
+  const paint = opts.pal ? chipPaint(opts.pal, opts.color) : null;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const padX = opts.padX ?? Math.round(size * 0.72);
+  const cut = ellipsize(ctx, label, Math.max(size * 2, maxWidth - padX * 2), role, opts.weight ?? 600, size);
+  const width = cut.width + padX * 2;
+  const left =
+    opts.align === 'center' ? x - width / 2 : opts.align === 'right' ? x - width : x;
+
+  if (opts.filled) {
+    ctx.fillStyle = opts.color;
+  } else {
+    ctx.fillStyle = paint ? paint.surface : rgba('#060b14', 0.85);
+  }
+  roundRect(ctx, left, y - height / 2, width, height, Math.round(height / 2));
+  ctx.fill();
+  ctx.strokeStyle = opts.filled ? rgba('#000000', 0.15) : paint ? paint.stroke : rgba(opts.color, 0.55);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.font = fontString(role, opts.weight ?? 600, size);
+  ctx.fillStyle = opts.filled ? '#06101a' : paint ? paint.ink : opts.color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(cut.text, left + width / 2, y + 1);
+  ctx.restore();
+
+  // A cut chip is a layout signal, not a silent loss of meaning.
+  if (alpha >= 0.15) {
+    recordText(
+      ctx,
+      opts.group ?? 'chip',
+      { x: left, y: y - height / 2, w: width, h: height },
+      label,
+      cut.truncated && !opts.truncateOk
+    );
+  }
+
+  return { width, height, text: cut.text, left };
+}
+
+/* ------------------------------------------------------------------ overlays */
+
+export function hudHeader(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  opts: { watermark: string; step: string; alpha?: number }
+): void {
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const alpha = clamp01(opts.alpha ?? 1);
+  const S = SAFE * k;
+  const width = dims.width - S * 2;
+  const size = 22 * k;
+  const baseline = (bands.headerTop + 16) * k;
+  const watermark = (opts.watermark || 'VISUAL CS LAB').toUpperCase();
+  const watermarkWidth = Math.min(width * 0.6, textWidth(ctx, watermark, 'mono', 600, size));
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = fontString('mono', 600, size);
+  ctx.fillStyle = inkTone(pal, 0.5);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(watermark, S, baseline);
+
+  const restWidth = width - watermarkWidth - 24 * k;
+  const step = ellipsize(ctx, opts.step, Math.max(0, restWidth), 'mono', 600, size);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = inkTone(pal, 0.62);
+  ctx.fillText(step.text, dims.width - S, baseline);
+  ctx.fillStyle = rgba(pal.ink, pal.dark ? 0.12 : 0.2);
+  ctx.fillRect(S, bands.headerRule * k, width, Math.max(1, 1.4 * k));
+  ctx.restore();
+}
+
+/**
+ * The operation banner: what is happening, and the state it produced. It owns the
+ * band between the header and the stage, and both lines are fitted so a long
+ * `mid = floor((low + high) / 2)` banner stays inside the frame.
+ */
+export function hudOperation(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  opts: { label: string; detail: string; accent?: string; alpha?: number; y?: number }
+): number {
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const alpha = clamp01(opts.alpha ?? 1);
+  if (alpha <= 0.01) return 0;
+  const S = SAFE * k;
+  const top = (opts.y ?? bands.operationTop) * k;
+  const color = opts.accent ?? pal.accent;
+  const width = dims.width - S * 2 - 30 * k;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.fillRect(S, top + 8 * k, Math.max(2, 6 * k), 76 * k);
+
+  const label = drawText(ctx, opts.label, {
+    box: { x: S + 26 * k, y: top, w: width, h: 54 * k },
+    role: 'display',
+    weight: 600,
+    size: 54 * k,
+    minSize: 34 * k,
+    maxLines: 1,
+    color: pal.ink,
+    group: 'operation-label'
+  });
+  drawText(ctx, opts.detail, {
+    box: { x: S + 28 * k, y: top + 58 * k, w: width, h: 46 * k },
+    role: 'mono',
+    weight: 400,
+    size: 26 * k,
+    minSize: 20 * k,
+    maxLines: 2,
+    lineHeight: 1.24,
+    color: inkTone(pal, 0.68),
+    group: 'operation-detail'
+  });
+  ctx.restore();
+  return top + label.height + 60 * k;
+}
+
+/** A single, high-contrast moment: a returned value or a found index. */
+export function toast(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  opts: { text: string; sub?: string; color: string; alpha: number; y?: number; scale?: number }
+): void {
+  // A landscape frame keeps the stage on screen at the result: the banner and the
+  // caption already carry the result, so the floating card is a vertical-only beat.
+  if (isLandscape(dims)) return;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const alpha = clamp01(opts.alpha);
+  if (alpha <= 0.01) return;
+  const centerY = (opts.y ?? (bands.resultTop + 66)) * k;
+  const scale = opts.scale ?? 1;
+  const S = SAFE * k;
+  const maxWidth = dims.width - S * 2;
+  const padX = 40 * k;
+
+  const textFit = fitText(ctx, opts.text, {
+    box: { x: 0, y: 0, w: maxWidth - padX * 2, h: 58 * k },
+    role: 'mono',
+    weight: 600,
+    size: 44 * k,
+    minSize: 26 * k,
+    maxLines: 1
+  });
+  const subFit = opts.sub
+    ? fitText(ctx, opts.sub, {
+        box: { x: 0, y: 0, w: maxWidth - padX * 2, h: 56 * k },
+        role: 'mono',
+        weight: 400,
+        size: 24 * k,
+        minSize: 18 * k,
+        maxLines: 2,
+        lineHeight: 1.25
+      })
+    : null;
+
+  const width = Math.min(maxWidth, Math.max(textFit.width, subFit?.width ?? 0) + padX * 2);
+  const height = textFit.height + (subFit?.height ?? 0) + (subFit ? 30 * k : 24 * k);
+  const top = centerY - height / 2;
+
+  // A result card on a light theme is paper with tinted ink, not night with dark
+  // secondary copy: the sub-line inherited the ink and vanished on the dark fill.
+  const paint = chipPaint(pal, opts.color);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(dims.width / 2, centerY);
+  ctx.scale(scale, scale);
+  ctx.translate(-dims.width / 2, -centerY);
+  ctx.fillStyle = paint.surface;
+  roundRect(ctx, (dims.width - width) / 2, top, width, height, Math.min(height / 2, 40 * k));
+  ctx.fill();
+  ctx.strokeStyle = pal.dark ? rgba(opts.color, 0.72) : paint.stroke;
+  ctx.lineWidth = 2.4 * k;
+  ctx.stroke();
+  ctx.restore();
+
+  drawText(ctx, opts.text, {
+    box: { x: (dims.width - width) / 2 + padX, y: top + 12 * k, w: width - padX * 2, h: textFit.height },
+    role: 'mono',
+    weight: 600,
+    size: 44 * k,
+    minSize: 26 * k,
+    maxLines: 1,
+    align: 'center',
+    color: paint.ink,
+    alpha,
+    group: 'result'
+  });
+  if (subFit && opts.sub) {
+    drawText(ctx, opts.sub, {
+      box: {
+        x: (dims.width - width) / 2 + padX,
+        y: top + textFit.height + 14 * k,
+        w: width - padX * 2,
+        h: subFit.height
+      },
+      role: 'mono',
+      weight: 400,
+      size: 24 * k,
+      minSize: 18 * k,
+      maxLines: 2,
+      lineHeight: 1.25,
+      align: 'center',
+      color: rgba(paint.ink, 0.75),
+      alpha,
+      group: 'result'
+    });
+  }
+}
+
+/**
+ * The explanation strip, inside the safe margin and above the platform's
+ * bottom band (username, description, music bar). The right rail is kept clear
+ * for the like / comment / share stack, which the platform draws over the video.
+ *
+ * Returns the card it drew, so a panel above it can sit clear of the strip instead
+ * of guessing how tall the fitted caption is.
+ */
+export function captionBar(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  opts: { text: string; alpha?: number; accent?: string }
+): Rect {
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const alpha = clamp01(opts.alpha ?? 1);
+  const value = (opts.text || '').trim();
+  if (alpha <= 0.01 || !value) return { x: 0, y: dims.height, w: 0, h: 0 };
+  const S = SAFE * k;
+  const padX = 40 * k;
+  const cardWidth = dims.width - S * 2 - RAIL * k;
+  const maxWidth = cardWidth - padX * 2;
+
+  const fitted = fitText(ctx, value, {
+    box: { x: 0, y: 0, w: maxWidth, h: 168 * k },
+    role: 'text',
+    weight: 500,
+    size: 36 * k,
+    minSize: 22 * k,
+    maxLines: 3,
+    lineHeight: 1.36
+  });
+
+  const cardH = fitted.height + 52 * k;
+  const top = dims.height - bands.captionGap * k - cardH;
+  const card: Rect = { x: S, y: top, w: cardWidth, h: cardH };
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  // The strip carries body copy, so a paper theme keeps it nearly opaque: at the
+  // dark stage's transparency the animation glow showed through the words.
+  ctx.fillStyle = rgba(pal.scrim, pal.dark ? 0.8 : 0.93);
+  roundRect(ctx, S, top, cardWidth, cardH, 22 * k);
+  ctx.fill();
+  ctx.strokeStyle = rgba(pal.accent, pal.dark ? 0.2 : 0.32);
+  ctx.lineWidth = 1.4 * k;
+  ctx.stroke();
+  ctx.fillStyle = rgba(opts.accent ?? pal.accent, 0.95);
+  ctx.fillRect(S + 14 * k, top + 18 * k, 4 * k, cardH - 36 * k);
+  ctx.restore();
+
+  // A solid strip is an obstacle: anything else drawn over it is a layout fault.
+  if (alpha >= 0.15) recordObject(ctx, 'caption', card, 'caption strip');
+
+  drawText(ctx, value, {
+    box: { x: S + padX, y: top + 26 * k, w: maxWidth, h: fitted.height },
+    role: 'text',
+    weight: 500,
+    size: 36 * k,
+    minSize: 22 * k,
+    maxLines: 3,
+    lineHeight: 1.36,
+    color: inkTone(pal, 0.9),
+    alpha,
+    group: 'caption'
+  });
+  return card;
+}
+
+/* -------------------------------------------------------------- personal brand */
+
+/**
+ * Motion timings of the opening, in milliseconds from the start of its beat.
+ *
+ * They are absolute rather than fractions of the beat so the composition looks
+ * the same whether the opening is 2.0 or 3.0 seconds: everything has settled by
+ * `OPENING_SETTLED_MS`, which is the moment the automatic thumbnail is taken.
+ */
+export const OPENING_TIMING = {
+  kicker: [64, 288],
+  title: [128, 656],
+  rule: [512, 784],
+  credit: [656, 896],
+  sweep: [96, 1200]
+} as const;
+
+/**
+ * When the opening is complete: the title, rule and presenter credit are all in
+ * place and the automatic thumbnail is cut. The reveal itself settles by 896 ms;
+ * the capture waits a beat longer so the held title is what the frame shows.
+ */
+export const OPENING_SETTLED_MS = 1000;
+
+export type OpeningCopy = {
+  title: string;
+  kicker: string;
+  presenter: string;
+  role: string;
+  style: string;
+};
+
+/**
+ * A dim, lit silhouette of the subject that sits behind the opening title, drawn
+ * in stage space so the camera move carries it. It reads as the data structure
+ * about to be built without competing with the headline.
+ */
+export function subjectSilhouette(
+  ctx: SKRSContext2D,
+  kind: 'stack' | 'binary',
+  pal: Palette,
+  alpha: number
+): void {
+  const a = clamp01(alpha);
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.strokeStyle = rgba(pal.accent, 0.5);
+  ctx.lineWidth = 2.2;
+  ctx.setLineDash([14, 12]);
+  if (kind === 'stack') {
+    for (let i = 0; i < 3; i++) {
+      const w = 420 - i * 26;
+      const y = -520 - i * 116;
+      roundRect(ctx, -w / 2, y, w, 96, 16);
+      ctx.stroke();
+    }
+  } else {
+    const w = 132;
+    for (let i = 0; i < 5; i++) {
+      roundRect(ctx, -5 * (w + 20) / 2 + i * (w + 20), -540, w, 150, 14);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/**
+ * The branded opening: a light sweep across the stage, the lesson's short title
+ * rising into place, an accent rule that draws itself, then the presenter credit
+ * with the professional title underneath.
+ *
+ * The three type roles carry the hierarchy — display for the title and the name,
+ * Inter for the professional title, mono for the kicker.
+ */
+export function openingReveal(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  opening: OpeningCopy,
+  tMs: number,
+  beat: { startMs: number; endMs: number }
+): void {
+  const k = chromeScale(dims);
+  // A landscape frame has less height, so the opening's vertical rhythm is
+  // compressed while its type keeps its size.
+  const v = frameRhythm(dims);
+  const at = tMs - beat.startMs;
+  const style = opening.style === 'minimal' || opening.style === 'bold' ? opening.style : 'cinematic';
+  // The whole composition drifts forward and fades over the last moments, so the
+  // algorithm animation underneath takes over without a cut.
+  const outro = 1 - easeInCubic(track(tMs, beat.endMs - 320, beat.endMs));
+  if (outro <= 0.01) return;
+  const push = 1 + (1 - outro) * 0.03;
+
+  const cx = dims.width / 2;
+  const width = dims.width - SAFE * 2 * k;
+
+  // Light sweep: a soft band crossing the stage, the opening's sense of depth.
+  const sweepP = track(at, OPENING_TIMING.sweep[0], OPENING_TIMING.sweep[1]);
+  if (style !== 'minimal' && sweepP > 0 && sweepP < 1) {
+    const x = lerp(-0.5, 1.3, sweepP) * dims.width;
+    const band = ctx.createLinearGradient(x - dims.width * 0.4, 0, x + dims.width * 0.4, dims.height * 0.6);
+    band.addColorStop(0, rgba('#ffffff', 0));
+    band.addColorStop(0.5, rgba(pal.accent, 0.12 * Math.sin(sweepP * Math.PI)));
+    band.addColorStop(1, rgba('#ffffff', 0));
+    ctx.save();
+    ctx.globalAlpha = outro;
+    ctx.fillStyle = band;
+    ctx.fillRect(0, 0, dims.width, dims.height);
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.translate(cx, dims.height * 0.5);
+  ctx.scale(push, push);
+  ctx.translate(-cx, -dims.height * 0.5);
+
+  // Kicker: what kind of lesson this is.
+  const kickerIn = easeOutCubic(track(at, OPENING_TIMING.kicker[0], OPENING_TIMING.kicker[1]));
+  if (opening.kicker && kickerIn > 0.01) {
+    drawChip(ctx, cx, 452 * k * v, opening.kicker.toUpperCase(), {
+      size: 22 * k,
+      color: pal.accent,
+      pal,
+      align: 'center',
+      alpha: kickerIn * outro,
+      maxWidth: width * 0.8,
+      group: 'open-kicker'
+    });
+  }
+
+  // Title: the lesson's own short title, in the display face.
+  const titleIn = easeOutCubic(track(at, OPENING_TIMING.title[0], OPENING_TIMING.title[1]));
+  const titleGlow = style === 'cinematic' ? 0.55 + 0.15 * Math.sin(at / 620) : 0;
+  const rise = (1 - titleIn) * (style === 'bold' ? 0 : style === 'minimal' ? 18 : 56) * k * v;
+  const titleText = style === 'bold' ? opening.title.toUpperCase() : opening.title;
+
+  if (titleGlow > 0 && titleIn > 0.01) {
+    const halo = ctx.createRadialGradient(cx, 760 * k * v, 20, cx, 760 * k * v, 520 * k);
+    halo.addColorStop(0, rgba(pal.accent, 0.16 * titleGlow * titleIn * outro));
+    halo.addColorStop(1, rgba(pal.accent, 0));
+    ctx.save();
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 380 * k * v, dims.width, 760 * k * v);
+    ctx.restore();
+  }
+
+  const titleSize = style === 'bold' ? 124 : style === 'minimal' ? 92 : 112;
+  const fitted = drawText(ctx, titleText, {
+    box: { x: SAFE * k, y: 530 * k * v + rise, w: width, h: 420 * k * v },
+    role: 'display',
+    weight: 700,
+    size: titleSize * k * (v < 1 ? 0.82 : 1),
+    minSize: 54 * k,
+    maxLines: 2,
+    lineHeight: style === 'bold' ? 1.02 : 1.1,
+    align: 'center',
+    valign: 'middle',
+    color: pal.ink,
+    alpha: titleIn * outro,
+    group: 'open-title'
+  });
+
+  const ruleY = 530 * k * v + rise + (420 * k * v + fitted.height) / 2 + 46 * k * v;
+  const ruleIn = easeOutCubic(track(at, OPENING_TIMING.rule[0], OPENING_TIMING.rule[1]));
+  if (ruleIn > 0.01) {
+    const ruleW = (style === 'minimal' ? 120 : 190) * k * ruleIn;
+    ctx.save();
+    ctx.globalAlpha = outro;
+    const ruleGrad = ctx.createLinearGradient(cx - ruleW, 0, cx + ruleW, 0);
+    ruleGrad.addColorStop(0, rgba(pal.accent, 0));
+    ruleGrad.addColorStop(0.5, rgba(pal.accent, 0.95));
+    ruleGrad.addColorStop(1, rgba(pal.accent, 0));
+    ctx.fillStyle = ruleGrad;
+    ctx.fillRect(cx - ruleW, ruleY, ruleW * 2, Math.max(2, 3 * k));
+    ctx.restore();
+  }
+
+  // Presenter credit: the name carries the brand, the professional title supports it.
+  const creditIn = easeOutCubic(track(at, OPENING_TIMING.credit[0], OPENING_TIMING.credit[1]));
+  if (creditIn > 0.01) {
+    // The credit stack keeps a real gap between the name and the title on a
+    // landscape frame: a compressed offset would sit the two lines on each other.
+    const land = isLandscape(dims);
+    const creditY = ruleY + (land ? 34 : 76) * k * v + (1 - creditIn) * 22 * k;
+    drawText(ctx, 'PRESENTED BY', {
+      box: { x: SAFE * k, y: creditY, w: width, h: 32 * k * v },
+      role: 'mono',
+      weight: 400,
+      size: 21 * k,
+      minSize: 16 * k,
+      maxLines: 1,
+      align: 'center',
+      color: inkTone(pal, 0.5),
+      alpha: creditIn * outro,
+      group: 'open-credit'
+    });
+    drawText(ctx, opening.presenter, {
+      box: { x: SAFE * k, y: creditY + (land ? 30 : 42) * k, w: width, h: (land ? 56 : 70 * v) * k },
+      role: 'display',
+      weight: 600,
+      size: (land ? 40 : 54) * k,
+      minSize: 34 * k,
+      maxLines: 1,
+      align: 'center',
+      color: pal.ink,
+      alpha: creditIn * outro,
+      group: 'open-presenter'
+    });
+    drawText(ctx, opening.role, {
+      box: { x: SAFE * k, y: creditY + (land ? 96 : 118 * v) * k, w: width, h: 44 * k * v },
+      role: 'text',
+      weight: 500,
+      size: 28 * k,
+      minSize: 20 * k,
+      maxLines: 1,
+      align: 'center',
+      color: accentTone(pal, pal.accent, 0.85),
+      alpha: creditIn * outro,
+      group: 'open-role'
+    });
+  }
+
+  ctx.restore();
+}
+
+
+/* ------------------------------------------------------- social marks */
+
+const SOCIAL_KEYS = ['instagram', 'linkedin'] as const;
+
+/** The Instagram glyph: rounded square, lens circle and the flash dot. */
+function instagramMark(ctx: SKRSContext2D, x: number, y: number, size: number, color: string, alpha: number): void {
+  const pad = size * 0.11;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1.6, size * 0.085);
+  roundRect(ctx, x, y, size, size, size * 0.3);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x + size / 2, y + size / 2, size * 0.25, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x + size * 0.76, y + size * 0.24, size * 0.062, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  void pad;
+}
+
+/** The LinkedIn glyph: solid square with the knockout "in". */
+function linkedinMark(
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  size: number,
+  color: string,
+  knock: string,
+  alpha: number
+): void {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  roundRect(ctx, x, y, size, size, size * 0.2);
+  ctx.fill();
+  ctx.fillStyle = knock;
+  ctx.font = fontString('display', 700, size * 0.6);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('in', x + size / 2, y + size / 2 + size * 0.02);
+  ctx.restore();
+}
+
+/**
+ * One social line: the platform mark and the handle, drawn as a single centred
+ * unit so both lines share the same mark size, gap and optical alignment.
+ */
+function socialLine(
+  ctx: SKRSContext2D,
+  cx: number,
+  y: number,
+  key: 'instagram' | 'linkedin',
+  handle: string,
+  pal: Palette,
+  k: number,
+  alpha: number
+): number {
+  const size = 34 * k;
+  const gap = 14 * k;
+  const textSize = 26 * k;
+  const value = String(handle || '').trim();
+  if (!value) return 0;
+  const width = textWidth(ctx, value, 'mono', 600, textSize);
+  const left = cx - (size + gap + width) / 2;
+  if (key === 'instagram') {
+    instagramMark(ctx, left, y - size / 2, size, inkTone(pal, 0.9), alpha);
+  } else {
+    linkedinMark(ctx, left, y - size / 2, size, inkTone(pal, 0.9), pal.dark ? '#0b1220' : '#ffffff', alpha);
+  }
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = fontString('mono', 600, textSize);
+  ctx.fillStyle = inkTone(pal, 0.86);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(value, left + size + gap, y + 1);
+  ctx.restore();
+  return size + gap + width;
+}
+
+
+/**
+ * The video's hook line, shown at the top of the opening beat so the premise is
+ * readable inside the first second — before the title finishes rising.
+ */
+export function openingHook(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  value: string,
+  alpha: number
+): void {
+  const text = String(value || '').trim();
+  const a = clamp01(alpha);
+  if (!text || a <= 0.01) return;
+  const k = chromeScale(dims);
+  const bands = bandsOf(dims);
+  const S = SAFE * k;
+  const width = dims.width - S * 2;
+  const box = isLandscape(dims)
+    ? { x: S, y: bands.hookTop * k, w: width, h: (bands.hookBottom - bands.hookTop) * k }
+    : { x: S, y: 268 * k, w: width, h: 148 * k };
+  drawText(ctx, text, {
+    box,
+    role: 'display',
+    weight: 600,
+    size: 44 * k,
+    minSize: 26 * k,
+    maxLines: 2,
+    lineHeight: 1.18,
+    align: 'center',
+    valign: 'middle',
+    color: inkTone(pal, 0.92),
+    alpha: a,
+    group: 'open-hook'
+  });
+}
+
+/**
+ * The personal-brand closing: the name settles in, an accent rule draws itself,
+ * the professional title stays secondary and one closing line finishes the short.
+ */
+export function brandEnd(
+  ctx: SKRSContext2D,
+  dims: Dims,
+  pal: Palette,
+  brand: BrandLike,
+  progress: number
+): void {
+  const k = chromeScale(dims);
+  const v = frameRhythm(dims);
+  const p = clamp01(progress);
+  const bloom = easeOutCubic(track(p, 0, 0.32));
+  const nameIn = easeOutCubic(track(p, 0.1, 0.46));
+  const ruleIn = easeOutCubic(track(p, 0.26, 0.6));
+  const roleIn = easeOutCubic(track(p, 0.3, 0.64));
+  const closeIn = easeOutCubic(track(p, 0.4, 0.78));
+  const cx = dims.width / 2;
+  const width = dims.width - SAFE * 2 * k;
+  const nameY = dims.height * (isLandscape(dims) ? 0.3 : 0.42);
+  const rise = (1 - nameIn) * 40 * k * v;
+
+  // A single pool of light behind the name: the camera has settled, the lesson is over.
+  const halo = ctx.createRadialGradient(cx, nameY + 40 * k, 10, cx, nameY + 40 * k, dims.width * 0.7);
+  halo.addColorStop(0, rgba(pal.accent, 0.16 * bloom));
+  halo.addColorStop(0.55, rgba(pal.violet, 0.05 * bloom));
+  halo.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.save();
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, dims.width, dims.height);
+  ctx.restore();
+
+  const scale = 1 + (1 - nameIn) * 0.05;
+  ctx.save();
+  ctx.translate(cx, nameY);
+  ctx.scale(scale, scale);
+  ctx.translate(-cx, -nameY);
+
+  drawText(ctx, brand.presenter || BRAND_DEFAULTS.presenter, {
+    box: { x: SAFE * k, y: nameY - 60 * k * v + rise, w: width, h: 130 * k * v },
+    role: 'display',
+    weight: 700,
+    size: 88 * k,
+    minSize: 44 * k,
+    maxLines: 2,
+    lineHeight: 1.08,
+    align: 'center',
+    valign: 'middle',
+    color: pal.ink,
+    alpha: nameIn,
+    group: 'brand-name'
+  });
+
+  const ruleY = nameY + 78 * k * v;
+  if (ruleIn > 0.01) {
+    const ruleW = 96 * k * ruleIn;
+    const ruleGrad = ctx.createLinearGradient(cx - ruleW, 0, cx + ruleW, 0);
+    ruleGrad.addColorStop(0, rgba(pal.accent, 0));
+    ruleGrad.addColorStop(0.5, rgba(pal.accent, 0.95));
+    ruleGrad.addColorStop(1, rgba(pal.accent, 0));
+    ctx.fillStyle = ruleGrad;
+    ctx.fillRect(cx - ruleW, ruleY, ruleW * 2, Math.max(2, 3 * k));
+  }
+
+  drawText(ctx, brand.role || BRAND_DEFAULTS.role, {
+    box: { x: SAFE * k, y: ruleY + 34 * k * v, w: width, h: 48 * k * v },
+    role: 'text',
+    weight: 500,
+    size: 32 * k,
+    minSize: 22 * k,
+    maxLines: 1,
+    align: 'center',
+    color: inkTone(pal, 0.72),
+    alpha: roleIn,
+    group: 'brand-role'
+  });
+
+  drawText(ctx, brand.closing || brand.outro || '', {
+    box: { x: SAFE * k, y: ruleY + 118 * k * v, w: width, h: 130 * k * v },
+    role: 'text',
+    weight: 500,
+    size: 40 * k,
+    minSize: 24 * k,
+    maxLines: 2,
+    lineHeight: 1.32,
+    align: 'center',
+    color: inkTone(pal, 0.9),
+    alpha: closeIn,
+    group: 'brand-closing'
+  });
+
+  // The call to action and the handle: an outro has to ask for something.
+  const ctaIn = easeOutCubic(track(p, 0.52, 0.88));
+  if (ctaIn > 0.01) {
+    if (brand.cta) {
+      drawChip(ctx, cx, ruleY + 300 * k * v, brand.cta, {
+        size: 28 * k,
+        color: pal.accent,
+        pal,
+        align: 'center',
+        filled: true,
+        alpha: ctaIn,
+        maxWidth: width * 0.92,
+        group: 'brand-cta'
+      });
+    }
+    const socialIn = easeOutCubic(track(p, 0.58, 0.94));
+    if (socialIn > 0.01) {
+      // Exactly two lines, in a fixed order, each mark the same size.
+      socialLine(ctx, cx, ruleY + 384 * k * v, 'instagram', brand.instagram || '', pal, k, socialIn);
+      socialLine(ctx, cx, ruleY + 444 * k * v, 'linkedin', brand.linkedin || '', pal, k, socialIn);
+    }
+  }
+
+  ctx.restore();
+}
+
+/** Soft fade used between beats so nothing snaps. */
+export function curtain(ctx: SKRSContext2D, dims: Dims, pal: Palette, alpha: number): void {
+  const a = clamp01(alpha);
+  if (a <= 0.001) return;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.fillStyle = pal.dark ? mix(pal.bg, '#000000', 0.4) : mix(pal.bg, '#ffffff', 0.5);
+  ctx.fillRect(0, 0, dims.width, dims.height);
+  ctx.restore();
+}
+
+export { easeOutCubic, lerp, track, overlapArea };

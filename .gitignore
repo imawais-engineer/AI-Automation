@@ -28,12 +28,14 @@ Thumbs.db
 .Spotlight-V100
 .Trashes
 
-# Workflow exports (if containing sensitive data)
-# *.json  # Uncomment if exporting n8n workflows with credentials
-
 # Local testing files
 test-output/
 *.tmp
+
+# Visual CS Lab build output and local data (the app's real data lives in DATA_DIR)
+visual-cs-lab/dist/
+visual-cs-lab/.data/
+visual-cs-lab/*.db
 # --- Security hardening (secrets & local files) ---
 .env.*
 !.env.example

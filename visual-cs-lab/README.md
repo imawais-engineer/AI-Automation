@@ -1,0 +1,377 @@
+# Visual CS Lab
+
+Code-driven educational shorts: a Computer Science concept becomes a **verified
+algorithm trace**, the trace becomes a **continuous animation timeline**, and that
+timeline is drawn frame by frame into a **branded, silent vertical MP4**.
+
+The product is deliberately small: **Create → Videos → Style**. Create verifies an
+input with the trusted implementation, generates the animation and offers a preview
+render; Videos previews, exports and downloads finished MP4s; Style owns the brand
+palette and typography. Library routes (concepts, lessons, render manager, publishing
+queue) stay available behind the navigation's Library group.
+
+Two shorts ship complete end to end, both silent 45 second verticals:
+
+- **Stacks** — PUSH 10, 20, 30 · PEEK · POP · POP · PUSH 40, watched as one continuous
+  tower with a moving TOP pointer and a labelled underflow example.
+- **Binary Search** — `[1, 3, 5, 7, 9]` and target `7`, with LOW/HIGH/MID, the active
+  range and the discarded half driven by the verified trace.
+
+## Quick start
+
+**Prerequisites:** Node.js 20.19+ (22 LTS recommended) and npm. Nothing else: ffmpeg is
+installed as a package (`ffmpeg-static`), the video fonts are committed in
+`public/fonts/`, and storage is SQLite — no database server and no headless Chromium.
+
+```bash
+git clone https://github.com/imawais-engineer/AI-Automation.git
+cd AI-Automation/visual-cs-lab
+npm ci                    # install exactly the locked dependency tree
+cp .env.example .env      # optional — only voice-over needs a key
+npm run dev               # API, UI and video downloads on http://localhost:3000
+```
+
+Open <http://localhost:3000> for the public learning site. The Studio is empty until an
+administrator exists: on a fresh install `/sign-in` offers a **create the first
+administrator** form, and that account receives the `admin` role. Later sign-ups at
+`/sign-up` are learners; an administrator changes a role with
+`PATCH /api/admin/users/:id`. The Studio then lives at `/admin/content` (roadmap and
+lesson editing) and `/admin/renders` (render jobs, quality reports, video captions).
+
+The app writes to two directories. Their defaults are under `/tmp`, which a reboot can
+clear, so point them somewhere permanent to keep content and videos:
+
+```bash
+DATA_DIR=~/.visual-cs-lab MEDIA_DIR=~/.visual-cs-lab/media npm run dev
+```
+
+## Environment variables
+
+Every variable is optional — the app boots, renders and passes its tests with none of
+them. Copy `.env.example` to `.env` (loaded at boot; real environment variables win) or
+set them in the host's environment.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP port for the API, the UI and video downloads |
+| `DATA_DIR` | `/tmp/visual-cs-lab` | Where `lab.db` (SQLite) is created |
+| `MEDIA_DIR` | `/tmp/visual-cs-lab/media` | Rendered MP4s, scene clips and thumbnails |
+| `DEEPGRAM_API_KEY` | — | Voice-over narration; unset means the Studio reports "provider not configured" instead of failing mid-mix |
+| `DEEPGRAM_BASE_URL` | `https://api.deepgram.com` | Optional Deepgram-compatible endpoint |
+| `DEEPGRAM_TTS_MODEL` | `flux-naveen-en` | Narration model/voice |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | — | Reserved for AI-assisted drafting; nothing reads them yet |
+
+Keys stay in the server environment: never in a lesson row, never in the browser.
+
+## Project map
+
+| Path | What lives there |
+| --- | --- |
+| `server/index.ts` | The Express app, Vite middleware in dev and every learner route |
+| `server/public-api.ts` / `server/admin-api.ts` | Public learning API and the role-gated Studio API |
+| `server/auth.ts` / `server/roles.ts` | Sessions, password hashing and the one permission table (`can()`) |
+| `server/algorithms/` | Trusted implementations that produce verified traces, with their tests |
+| `server/anim/` | The deterministic 2.5D motion engine and its scene inspectors |
+| `server/render/` | Frame painting, ffmpeg encoding, quality gate, profiles, cleanup |
+| `server/db.ts`, `server/content.ts` | SQLite schema, seed concepts, content helpers |
+| `server/pipeline.ts` | Derives a lesson's stage from its trace, storyboard and renders |
+| `src/pages/public/`, `src/pages/admin/` | Learner screens and Studio screens |
+| `src/components/` | Shared panels: renders, narration, publishing, cleanup |
+| `public/fonts/` | Bundled video typefaces (SIL Open Font License) |
+
+## Troubleshooting
+
+- **Port 3000 busy** — `PORT=3001 npm run dev`.
+- **A lesson refuses to render** — its concept needs a trusted animation
+  configuration; rendering is blocked rather than faked (see *Known gaps*).
+- **Videos disappeared after a restart** — they were in `/tmp`; set `DATA_DIR` and
+  `MEDIA_DIR` to a permanent path.
+- **Boot fails on fonts** — `public/fonts/` must be intact; rendering refuses a
+  substitute typeface on purpose.
+
+## Stack
+
+| Layer | Choice | Why |
+| --- | --- | --- |
+| UI | React 18 + TypeScript + Vite | Component-driven pages, one dev server with HMR |
+| Motion | `server/anim/` — a deterministic 2.5D engine on Skia | One plan, one renderer for preview and export |
+| API | Express, mounted with Vite in middleware mode | One origin on port 3000: no CORS, API and video downloads share the session |
+| Data | SQLite (`better-sqlite3`) at `DATA_DIR` | Concepts, lessons, storyboards, render jobs, publishing entries persist across restarts |
+| Frames | `@napi-rs/canvas` (Skia) | Real 2160×3840 drawing with no headless Chromium download |
+| Encode | `ffmpeg-static`, raw RGBA piped to stdin | H.264/yuv420p, `+faststart`, nothing to install in the image |
+
+## Pipeline (matches the product spec)
+
+1. Load the lesson and its concept. A lesson may carry its own animation input
+   (`animation_input`), which overrides the concept's demo configuration.
+2. Validate the lesson (`lessonIssues` in `server/scenes.ts`): hook, takeaway, duration,
+   animation configuration, verified trace, expected result, stored storyboard, timings,
+   one operation beat per verified event, and the lesson/concept reference.
+3. Run the concept's **trusted** animation configuration — `kind: 'stack'` uses
+   `server/algorithms/stack.ts`, `kind: 'binary-search'` uses
+   `server/algorithms/binary-search.ts`.
+4. Emit a trace: stack events (`push`/`pop`/`top`) or binary search steps
+   (`low`/`high`/`mid`/comparison/eliminated range).
+5. Validate the trace against the concept's expected results — a mismatch blocks rendering.
+6. Build the beat list (`server/scenes.ts`): hook, setup, one beat per verified
+   operation, LIFO takeaway, complexity, brand — 45 seconds of weights for the demos.
+7. Build the **motion plan** (`server/anim/plan.ts`) from the stored beat durations plus
+   the freshly verified trace: every block, marker and camera key is positioned in time.
+8. Render frames from that plan, one canvas reused, each frame written once the
+   previous write has drained. The same `drawMoment()` produces the preview, the
+   storyboard stills and the exported master — there is no slideshow renderer.
+9. Encode and stream to ffmpeg (H.264, `yuv420p`, `+faststart`, no audio track).
+10. Validate the encoded file (`server/render/quality.ts`): MP4 container, H.264,
+    yuv420p, even dimensions, exact resolution, silence, duration within one frame, a
+    full decode pass whose frame count matches the timeline, a **bitrate floor**
+    (0.55 Mbit/s at 1080×1920, 2.2 Mbit/s at 4K), and five sampled frames
+    (6 % / 28 % / 50 % / 74 % / 94 %) that are neither blank nor a repeated still.
+11. Inspect the plan (`server/anim/inspect.ts`) before encoding and again for the report:
+    text containment, text-to-object and label-to-label collisions, pointer-to-target
+    alignment, and the algorithm state each scene shows. A failure refuses the render.
+12. Only then mark the job `done`; anything else is a failed job with the failing
+    check, a readable log and a retry button.
+
+The voice-over script is a separate artifact (`server/voiceover.ts`): generated from the
+same plan, timestamped per scene, checked for alignment, pace and accuracy, and
+regenerated without a re-render. A script whose source hash no longer matches the lesson
+is reported as *outdated* and blocks "ready to publish" until it is regenerated.
+
+## The animation engine (`server/anim/`)
+
+One continuous stage per video. The camera pushes and drifts, but the environment never
+cuts away between operations: blocks, markers and the TOP pointer move because the
+algorithm's state changed, not because a new scene arrived.
+
+| Module | Responsibility |
+| --- | --- |
+| `easing.ts` | Pure time functions: cubic/quint easing, settle, bump, envelope |
+| `plan.ts` | Builds the plan: beat windows, stack block lifetimes, binary step windows |
+| `stage.ts` | Visual language: backdrop, floor grid, 2.5D blocks, overlay bands, brand end |
+| `anchors.ts` | Anchor map + label placement: chips attach to rendered bounds, never to fixed coordinates |
+| `audit.ts` | Layout recorder: text, object and pointer geometry for the inspection pass |
+| `inspect.ts` | Scene inspection: containment, collisions, pointer alignment, algorithm state |
+| `stack.ts` | Stack stage: arriving/leaving blocks, anchored TOP pointer, LIFO demo, underflow inset |
+| `binary.ts` | Binary stage: array row, range bracket, anchored LOW/HIGH/MID markers, discarded half |
+| `index.ts` | `planFor()` and `drawMoment()` — the only render entry point |
+
+Visual rules the engine follows:
+
+- Blocks are solids with a lit top plane, a vertical front gradient, a shadow side and a
+  contact shadow; light comes from above and the camera parallax matches the floor grid.
+- Motion is driven by verified values: a PUSH drops a block into slot
+  `items.length - 1`, a POP lifts the block the trace says was removed, MID travels to
+  the index the comparison actually used.
+- Text is restrained to a label system: operation banner, TOP pointer, value badges,
+  range/marker chips, one caption line. Nothing is a paragraph on a slide.
+- Every pointer is **anchored**: the TOP chip is attached to the rendered bounds of the
+  block that is currently on top, and LOW/HIGH/MID are laid out as one row whose stems
+  land on the index they name. Positions are recomputed from the block transform each
+  frame, so a moving, settling or re-framed object takes its pointer with it. A label
+  chip is placed in the first free slot around the anchor; when an anchor cannot be
+  resolved the pointer is skipped and the scene is reported as failing inspection.
+- Overlays live in frame bands (`BAND` in `stage.ts`): header, kicker chips, operation
+  banner, hook headline, result card, caption strip, progress bar. Two overlays cannot
+  collide because no band overlaps another.
+- There is **no audio track at all** — `-an` on the encoder and a quality check that the
+  file has no audio stream. The narration exists as a **voice-over script**, not audio.
+
+## Render lifecycle and the quality gate
+
+`queued → rendering → encoding → validating → done`, plus `error` and `cancelled`.
+
+Each job stores the lesson id, output profile, resolution, frame rate, expected
+duration and frame count, storyboard hash, the scene snapshot, progress based on
+frames actually written, timestamps, output path, byte size, media metadata and the
+full validation report. Only one job renders at a time (the worker is a single
+in-process pump), frames are streamed and never collected into an array, and a
+second queued render for the same lesson is rejected.
+
+`server/pipeline.ts` derives the lesson stage from that data — `draft`,
+`trace_verified`, `storyboard_ready`, `rendered`, `quality_checked`,
+`ready_to_publish` — and a lesson only becomes **ready to publish** when a
+quality-checked render exists *and* the review status is approved. Machine checks
+cannot judge legibility or educational accuracy, so those stay on the publication
+checklist as explicit human-review items instead of being reported as passed.
+
+## API
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/health` | Readiness probe |
+| `GET /api/algorithms` | Algorithms the Create screen can animate, with default inputs |
+| `POST /api/create` | Verify an input, create the lesson, store its beats, report readiness |
+| `GET /api/overview` | Dashboard counts, recent lessons and jobs |
+| `GET/POST /api/concepts`, `GET/PATCH /api/concepts/:id` | Concept library |
+| `POST /api/concepts/:id/trace` | Run the trusted trace (visualizer + validation) |
+| `GET/POST /api/lessons`, `PATCH /api/lessons/:id` | Lesson scripts |
+| `POST /api/lessons/:id/storyboard` | Build and store scenes from the verified trace |
+| `PATCH /api/lessons/:id/scenes` | Edit stored scene durations and captions, and/or reorder (`order: [ids]`) |
+| `POST /api/lessons/:id/scenes/:sceneId/duplicate` | Duplicate a scene after itself |
+| `GET /api/lessons/:id/scene/:i.png?w=540` | Real rendered frame from the beat (360–1080px) |
+| `GET /api/lessons/:id/inspect` | Layout, pointer and algorithm-state inspection of the storyboard |
+| `GET/POST/PATCH /api/lessons/:id/voiceover` | Read, generate and edit the timestamped voice-over script |
+| `GET /api/lessons/:id/scene/:i/clip.mp4` | Motion preview of one scene (cached encode) |
+| `GET/PATCH /api/brand` | Brand template read by the renderer |
+| `POST /api/renders`, `GET /api/renders/:id` | Render jobs, progress, logs, errors, validation report |
+| `POST /api/renders/:id/cancel` | Cancel a queued or in-flight job |
+| `GET /api/renders/:id/stream` | Inline playback of the finished MP4 |
+| `GET /api/renders/:id/video` | The finished MP4 as a download |
+| `GET/POST /api/publishes`, `PATCH /api/publishes/:id` | Manual publishing queue per platform |
+
+## Binary Search (end-to-end slice)
+
+The concept carries its trusted animation configuration:
+
+```json
+{
+  "kind": "binary-search",
+  "array": [1, 3, 5, 7, 9],
+  "target": 7,
+  "expect": { "foundIndex": 3, "steps": 2 }
+}
+```
+
+`server/algorithms/binary-search.ts` is the trusted implementation: inclusive
+`low`/`high`, `mid = floor((low + high) / 2)`, one recorded step per comparison, and
+the index it returns is checked against an independent linear scan. **Precondition:**
+the input must be sorted ascending — an unsorted configuration is reported as an error
+instead of being traced. `binary-search.test.ts` covers the example (index 3 after two
+comparisons), empty arrays, a target below the minimum, above the maximum, missing from
+the middle, a single-element array, duplicates, unsorted input and wrong expectations.
+
+`buildScenes` gives a 45 second binary search short exactly five beats and exactly
+45000 ms (1350 frames at 30 fps):
+
+| # | Beat | Duration | Content |
+| --- | --- | --- | --- |
+| 1 | Hook | 3.0 s | "Searching a sorted array? Check the middle first." |
+| 2 | Setup | 5.0 s | The sorted array and target 7, with the sorted-input precondition |
+| 3 | Trace | 27.5 s | Array settles, MID moves to 2, `5 < 7`, indices 0–1 discarded, LOW → 3, range contracts, MID → 3, `FOUND · INDEX 3`, then the halving demonstration |
+| 4 | Complexity | 7.0 s | O(log n) time, O(1) auxiliary space, n → n/2 bars |
+| 5 | Brand | 2.5 s | Visual CS Lab and "Understand the algorithm. Don't just memorize it." |
+
+Beat durations use largest-remainder allocation, so any lesson length adds up exactly to
+the lesson duration. Beat timings and captions can be edited in the lesson editor
+(`PATCH /api/lessons/:id/scenes`); the plan is rebuilt from the **stored** beats, and
+validation reports when the timings no longer match the lesson duration.
+
+Inside the trace beat the verified steps split their window into an intro, one share per
+comparison and a closing halving share. The markers, the range bracket and the discarded
+half are read from `binaryStateAt(plan, t)`, so what you see is the trace's own state.
+
+## Editor, motion and output profiles
+
+The storyboard section shows a real frame per scene; each card can play that scene's
+actual motion (a cached mp4 encoded by the same engine as the export) and can be moved
+earlier/later or duplicated. Reordering keeps the storyboard valid; duplicating adds
+time, so the timeline total has to be rebalanced before rendering.
+
+Output profiles (`server/render/profiles.ts`), all vertical 9:16 at 30 fps:
+
+| Profile | Resolution | Purpose |
+| --- | --- | --- |
+| Preview | 540 × 960 | Fast iteration and scene previews |
+| HD | 1080 × 1920 | Default publication output |
+| 4K | 2160 × 3840 | Optional master; slow, more memory |
+
+`drawMoment(plan, t)` is a pure function of the plan and the timestamp, so preview and
+export frames are identical and a re-render is deterministic. The camera follows the
+tower as it grows, blocks settle with a small squash on landing, the TOP pointer travels
+to the real top element, and every overlay fades with an envelope instead of cutting.
+All text is laid out by `server/render/layout.ts`: a string is fitted into a named box,
+shrinking until it wraps inside both the width and the height, with balanced line breaks.
+A string that cannot fit even at the minimum size is cut with an ellipsis and the cut is
+recorded, so it shows up in inspection instead of silently running off the frame.
+
+## Typography
+
+Three roles, bundled with the app in `public/fonts/` (SIL OFL 1.1, licence texts
+alongside): **Space Grotesk** 600/700 for headlines and hooks, **Inter** 400–600 for
+explanation and labels, **JetBrains Mono** 400/600 for code, indices and algorithm state.
+The browser loads the same files through `@font-face`, so the editor preview and the
+export share one system.
+
+Frames are drawn with Skia (`@napi-rs/canvas`), which draws **no text at all** when the
+machine has no fonts — the slim Node image has none. `server/render/typography.ts`
+registers each bundled weight under its own family alias at import time, so a `700`
+request can never be answered with a `400` face, and `assertFontsLoaded()` stops the
+server if a face is missing: substituting a typeface would break every fitted box.
+
+## Rendering adapters
+
+`server/render/` is the seam. The current adapter is `canvas + ffmpeg` running
+in-process, which is what the sandbox supports today. A Remotion (headless Chrome)
+worker would need a separate service with Chromium and far more memory; it is **not**
+implemented, and the UI never pretends otherwise — a render is either a validated
+MP4 or a failed job with an error.
+
+## Development
+
+```bash
+npm install
+npm run dev        # http://localhost:3000 (Vite dev server mounted in the API process)
+npm run build      # compiles the client into dist/ for a production server
+npm test           # traces, storyboard timing, layout fitting, voice-over, output quality, pipeline
+npm run typecheck
+```
+
+Test files cover the trusted algorithms (`server/algorithms/*.test.ts`), storyboard
+construction and lesson validation (`server/scenes.test.ts`), frame allocation and
+profiles (`server/render/profiles.test.ts`), text fitting and anchor placement
+(`server/render/layout.test.ts`), voice-over generation and its checks
+(`server/voiceover.test.ts`), the file-level quality checks
+(`server/render/quality.test.ts`) and the stage derivation (`server/pipeline.test.ts`).
+
+Environment variables (`PORT`, `DATA_DIR`, `MEDIA_DIR`, `DEEPGRAM_*`) are listed with
+their defaults under *Quick start*; `.env.example` is the template for a local `.env`.
+
+Voice-over narration is spoken from the lesson's voice-over script by a TTS
+provider. Deepgram is the wired-up provider; the key lives only in the server
+environment (`DEEPGRAM_API_KEY`, delivered as an app secret — never in a lesson
+row or the browser). `DEEPGRAM_BASE_URL` and `DEEPGRAM_TTS_MODEL` are optional and
+default to the public endpoint and `flux-naveen-en`. Without the key the Studio
+shows "provider not configured" and refuses to record instead of failing mid-mix.
+Each take is validated with ffmpeg and stored as an approved `narration` entry in
+the audio library, where the voice-over export mixes it under the silent master.
+
+## Deploy
+
+One container serves the built client and the API on the same origin. With
+`NODE_ENV=production` the server serves `dist/` (see `server/index.ts`) instead of
+mounting Vite, so run `npm run build` before starting it outside the image too.
+
+```bash
+cd visual-cs-lab
+docker build -t visual-cs-lab .
+docker run -d --name visual-cs-lab -p 3000:3000 \
+  -v visual-cs-lab-data:/data \
+  -e DEEPGRAM_API_KEY=... \
+  visual-cs-lab
+```
+
+`DATA_DIR=/data` and `MEDIA_DIR=/data/media` are baked into the image: the SQLite
+database, rendered MP4s and thumbnails live on that volume and survive a redeploy.
+Everything else (lessons, storyboards, render jobs) is content inside the database,
+so the volume *is* the release's state.
+
+What the image must reach at runtime: nothing, except Deepgram for narration. ffmpeg
+and the fonts ship inside the image; the renderer draws frames in-process, so give
+the container at least 2 vCPU / 2 GB RAM for 1080×1920 masters (4K needs more).
+
+Verified locally: the image builds, `/api/health` answers 200, `/` serves the hashed
+bundle from `dist/`, and a client route (`/learn`) returns the SPA shell.
+
+## Known gaps (deliberately not faked)
+
+- Only Stacks and Binary Search have a trusted animation configuration; Linear Search,
+  Bubble Sort and tree/graph primitives are **planned**, not implemented. Rendering is
+  blocked for every concept without a verified trace.
+- The renderer runs in-process (one job at a time). There is no external render worker:
+  this sandbox has no Chromium, and a Remotion/Chrome worker would need its own host.
+- 4K is selectable but has only been validated at HD; expect a slow render and more
+  memory, and check the output before publishing it.
+- AI-assisted drafting is not wired yet; `OPENAI_API_KEY` / `OPENAI_BASE_URL` are
+  stored for that phase and nothing reads them.
+- Automated publishing and platform analytics APIs are not implemented; the queue is
+  a manual workflow that records a real post URL.
