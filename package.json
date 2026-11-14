@@ -1,0 +1,19 @@
+{
+  "name": "visual-cs-lab-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Root entry point for Visual CS Lab. The application lives in visual-cs-lab/; these scripts delegate to it so tools that start from the repository root run the real app.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "postinstall": "npm ci --prefix visual-cs-lab --no-audit --no-fund",
+    "dev": "npm run dev --prefix visual-cs-lab",
+    "start": "npm start --prefix visual-cs-lab",
+    "build": "npm run build --prefix visual-cs-lab",
+    "test": "npm test --prefix visual-cs-lab",
+    "typecheck": "npm run typecheck --prefix visual-cs-lab",
+    "backup": "npm run backup --prefix visual-cs-lab --"
+  }
+}

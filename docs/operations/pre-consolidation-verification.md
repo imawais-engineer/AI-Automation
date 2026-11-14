@@ -1,5 +1,7 @@
 # Pre-consolidation verification
 
+> **Historical record.** Written before PR #1 merged `ai-video-shorts` into `main`. Branch names, commit ids and counts describe that moment. For the current state see [final-codebase-audit.md](../architecture/final-codebase-audit.md).
+
 Date: 2026-11-14. Branch: `ai-video-shorts` at `c75c5fe` plus the review fixes listed in §1.
 Environment: the Base44 sandbox — Docker Compose, the app running from the cloned source at
 `/workspace/visual-cs-lab`, production-like data in the `/data` volume (`lab.db` 7.1 MB, 122 media

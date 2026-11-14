@@ -2,7 +2,7 @@
 
 ```bash
 cd visual-cs-lab
-npm test           # 202 tests, node:test through tsx — the whole suite
+npm test           # node:test through tsx — the whole suite
 npm run test:api   # route contract: paths, methods, gates, validation, shapes
 npm run test:queue # render watchdog rules + crash recovery + child-process timeouts
 npm run test:backup# backup, verification, restore and retention
@@ -11,7 +11,7 @@ npm run typecheck  # tsc --noEmit over server, client and tests
 npm run build      # production client build
 ```
 
-Baseline on this branch: **202 passing, 0 failing**, typecheck clean, build clean.
+Baseline verified on `main` on 2026-11-14: **202 passing, 0 failing**, typecheck clean, build clean.
 
 ## What the suite covers
 

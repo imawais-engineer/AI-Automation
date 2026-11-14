@@ -29,7 +29,7 @@ Full setup, environment and troubleshooting notes:
 Run all three inside `visual-cs-lab/` and paste the outcome in the PR description:
 
 ```bash
-npm test           # 149 tests: algorithms, traces, rendering, quality, captions
+npm test           # algorithms, traces, rendering, quality, captions
 npm run typecheck  # tsc --noEmit
 npm run build      # production client build
 ```

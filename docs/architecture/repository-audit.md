@@ -1,5 +1,7 @@
 # Repository audit
 
+> **Historical record.** Written before PR #1 merged `ai-video-shorts` into `main`. Branch names, commit ids and counts describe that moment. For the current state see [final-codebase-audit.md](final-codebase-audit.md).
+
 Investigation performed before any code was changed. Evidence is quoted from Git and from
 reading the source; nothing here is inferred from documentation alone.
 

@@ -1,5 +1,7 @@
 # Branch consolidation plan (verified, not executed)
 
+> **Historical record.** Written before PR #1 merged `ai-video-shorts` into `main`. Branch names, commit ids and counts describe that moment. For the current state see [final-codebase-audit.md](../architecture/final-codebase-audit.md).
+
 This plan was produced by inspecting the remote state for real. **No branch was merged,
 rebased, reset or force-pushed.** `ai-video-shorts` and `main` are exactly as they were found.
 

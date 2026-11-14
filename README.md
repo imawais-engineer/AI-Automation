@@ -6,8 +6,10 @@ An interactive Computer Science learning platform built around structured tutori
 executable examples, verified algorithm traces and visual explanations — plus a Studio
 that turns those same traces into branded MP4 lessons.
 
-The application lives in [`visual-cs-lab/`](visual-cs-lab/). This repository root holds the
-product documentation, the security policy and the CI workflow.
+The application lives in [`visual-cs-lab/`](visual-cs-lab/). The repository root holds a thin
+`package.json` whose scripts delegate to it (so `npm install`, `npm run dev` and `npm start` work
+from the root), plus the product documentation, the security policy and the CI workflow.
+Opening `/` serves the public learning homepage, not documentation.
 
 ---
 
@@ -38,8 +40,8 @@ Every value in an animation comes from a real algorithm run. A render is only ma
 - **Quality gate** — container, codec, pixel format, resolution, even dimensions, audio,
   frame-accurate duration and sampled frame checks run on the finished MP4.
 - **Roles** — learner, editor, reviewer and admin, enforced per action on the server.
-- **Content** — 28 concepts, 28 lessons (23 published), 1 roadmap with 4 modules,
-  84 slides across 11 decks.
+- **Content** — a fresh database seeds 28 concepts, 28 lessons (13 published, 15 drafts) and the
+  DSA Foundations roadmap. Counts on a running deployment differ as editors publish lessons.
 
 ## Technology stack
 
@@ -52,10 +54,12 @@ server, no external asset pipeline.
 
 ```bash
 git clone https://github.com/imawais-engineer/AI-Automation.git
-cd AI-Automation/visual-cs-lab
-npm ci
+cd AI-Automation
+npm install          # root postinstall runs `npm ci` inside visual-cs-lab/
 npm run dev          # API + UI + video downloads on http://localhost:3000
 ```
+
+Equivalent, from the application directory: `cd visual-cs-lab && npm ci && npm run dev`.
 
 `ffmpeg` ships as a package and the video fonts are committed, so Node.js is the only
 prerequisite.
@@ -67,7 +71,7 @@ prerequisite.
 | `npm run dev` | Server + Vite middleware on port 3000 (live reload) |
 | `npm run build` | Production client build into `dist/` |
 | `npm start` | Run the server (serves `dist/` when `NODE_ENV=production`) |
-| `npm test` | 202 tests across algorithms, traces, rendering, quality, voice-over, API contracts, the render queue and backups |
+| `npm test` | The full suite: algorithms, traces, rendering, quality, voice-over, API contracts, the render queue, backups and the public UI |
 | `npm run typecheck` | `tsc --noEmit` over server, client and tests |
 
 ## Environment configuration
@@ -151,7 +155,7 @@ The container runs `npm run build` at image build time and serves the compiled c
 ## Documentation
 
 - [Mission](docs/product/mission.md) · [Learning experience](docs/product/learning-experience.md) · [Curriculum](docs/product/curriculum-structure.md)
-- [Architecture](docs/architecture/overview.md) · [Repository audit](docs/architecture/repository-audit.md) · [Visualization engine](docs/architecture/visualization-engine.md) · [Rendering pipeline](docs/architecture/rendering-pipeline.md) · [Database](docs/architecture/database.md)
+- [Architecture](docs/architecture/overview.md) · [Final codebase audit](docs/architecture/final-codebase-audit.md) · [Preview verification](docs/operations/final-preview-verification.md) · [Visualization engine](docs/architecture/visualization-engine.md) · [Rendering pipeline](docs/architecture/rendering-pipeline.md) · [Database](docs/architecture/database.md)
 - [Setup](docs/development/setup.md) · [Environment](docs/development/environment.md) · [Testing](docs/development/testing.md) · [Deployment](docs/development/deployment.md) · [Contributing](docs/development/contributing.md)
 
 ## Contributing

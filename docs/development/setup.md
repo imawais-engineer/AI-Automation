@@ -50,7 +50,7 @@ DATA_DIR=~/.visual-cs-lab MEDIA_DIR=~/.visual-cs-lab/media npm run dev
 npm run dev         # server + Vite middleware, port 3000
 npm run build       # production client build into dist/
 npm start           # server; serves dist/ when NODE_ENV=production
-npm test            # 202 tests
+npm test
 npm run typecheck   # tsc --noEmit
 ```
 

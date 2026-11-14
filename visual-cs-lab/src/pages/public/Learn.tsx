@@ -53,7 +53,7 @@ export default function Learn() {
     if (!data) return;
     document.title = `${data.lesson.title} · Visual CS Lab`;
     return () => {
-      document.title = 'Visual CS Lab — DSA lessons into branded shorts';
+      document.title = 'Visual CS Lab — Computer science, one concept at a time';
     };
   }, [data]);
 
